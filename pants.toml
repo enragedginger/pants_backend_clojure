@@ -6,5 +6,5 @@ backend_packages = [
 ]
 
 [jvm.resolves]
-java17 = "lockfiles/jvm/java17.lock.jsonc"
-java21 = "lockfiles/jvm/java21.lock.jsonc"
+java17 = "locks/jvm/java17.lock.jsonc"
+java21 = "locks/jvm/java21.lock.jsonc"

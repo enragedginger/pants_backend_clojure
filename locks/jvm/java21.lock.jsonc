@@ -6,8 +6,9 @@
 # {
 #   "version": 1,
 #   "generated_with_requirements": [
-#     "com.google.guava:guava:31.1-jre,url=not_provided,jar=not_provided",
-#     "junit:junit:4.13.2,url=not_provided,jar=not_provided"
+#     "com.google.guava:guava:33.0.0-jre,url=not_provided,jar=not_provided",
+#     "junit:junit:4.13.2,url=not_provided,jar=not_provided",
+#     "org.clojure:clojure:1.12.0,url=not_provided,jar=not_provided"
 #   ]
 # }
 # --- END PANTS LOCKFILE METADATA ---
@@ -28,31 +29,31 @@ serialized_bytes_length = 19936
 [[entries]]
 directDependencies = []
 dependencies = []
-file_name = "com.google.errorprone_error_prone_annotations_2.11.0.jar"
+file_name = "com.google.errorprone_error_prone_annotations_2.23.0.jar"
 
 [entries.coord]
 group = "com.google.errorprone"
 artifact = "error_prone_annotations"
-version = "2.11.0"
+version = "2.23.0"
 packaging = "jar"
 [entries.file_digest]
-fingerprint = "721cb91842b46fa056847d104d5225c8b8e1e8b62263b993051e1e5a0137b7ec"
-serialized_bytes_length = 15979
+fingerprint = "ec6f39f068b6ff9ac323c68e28b9299f8c0a80ca512dccb1d4a70f40ac3ec054"
+serialized_bytes_length = 16829
 [[entries]]
 directDependencies = []
 dependencies = []
-file_name = "com.google.guava_failureaccess_1.0.1.jar"
+file_name = "com.google.guava_failureaccess_1.0.2.jar"
 
 [entries.coord]
 group = "com.google.guava"
 artifact = "failureaccess"
-version = "1.0.1"
+version = "1.0.2"
 packaging = "jar"
 [entries.file_digest]
-fingerprint = "a171ee4c734dd2da837e4b16be9df4661afab72a41adaf31eb84dfdaf936ca26"
-serialized_bytes_length = 4617
+fingerprint = "8a8f81cf9b359e3f6dfa691a1e776985c061ef2f223c9b2c80753e1b458e8064"
+serialized_bytes_length = 4740
 [[entries]]
-file_name = "com.google.guava_guava_31.1-jre.jar"
+file_name = "com.google.guava_guava_33.0.0-jre.jar"
 [[entries.directDependencies]]
 group = "com.google.code.findbugs"
 artifact = "jsr305"
@@ -62,13 +63,13 @@ packaging = "jar"
 [[entries.directDependencies]]
 group = "com.google.errorprone"
 artifact = "error_prone_annotations"
-version = "2.11.0"
+version = "2.23.0"
 packaging = "jar"
 
 [[entries.directDependencies]]
 group = "com.google.guava"
 artifact = "failureaccess"
-version = "1.0.1"
+version = "1.0.2"
 packaging = "jar"
 
 [[entries.directDependencies]]
@@ -80,13 +81,13 @@ packaging = "jar"
 [[entries.directDependencies]]
 group = "com.google.j2objc"
 artifact = "j2objc-annotations"
-version = "1.3"
+version = "2.8"
 packaging = "jar"
 
 [[entries.directDependencies]]
 group = "org.checkerframework"
 artifact = "checker-qual"
-version = "3.12.0"
+version = "3.41.0"
 packaging = "jar"
 
 [[entries.dependencies]]
@@ -98,13 +99,13 @@ packaging = "jar"
 [[entries.dependencies]]
 group = "com.google.errorprone"
 artifact = "error_prone_annotations"
-version = "2.11.0"
+version = "2.23.0"
 packaging = "jar"
 
 [[entries.dependencies]]
 group = "com.google.guava"
 artifact = "failureaccess"
-version = "1.0.1"
+version = "1.0.2"
 packaging = "jar"
 
 [[entries.dependencies]]
@@ -116,24 +117,24 @@ packaging = "jar"
 [[entries.dependencies]]
 group = "com.google.j2objc"
 artifact = "j2objc-annotations"
-version = "1.3"
+version = "2.8"
 packaging = "jar"
 
 [[entries.dependencies]]
 group = "org.checkerframework"
 artifact = "checker-qual"
-version = "3.12.0"
+version = "3.41.0"
 packaging = "jar"
 
 
 [entries.coord]
 group = "com.google.guava"
 artifact = "guava"
-version = "31.1-jre"
+version = "33.0.0-jre"
 packaging = "jar"
 [entries.file_digest]
-fingerprint = "a42edc9cab792e39fe39bb94f3fca655ed157ff87a8af78e1d6ba5b07c4a00ab"
-serialized_bytes_length = 2959479
+fingerprint = "f4d85c3e4d411694337cb873abea09b242b664bb013320be6105327c45991537"
+serialized_bytes_length = 3047503
 [[entries]]
 directDependencies = []
 dependencies = []
@@ -150,16 +151,16 @@ serialized_bytes_length = 2199
 [[entries]]
 directDependencies = []
 dependencies = []
-file_name = "com.google.j2objc_j2objc-annotations_1.3.jar"
+file_name = "com.google.j2objc_j2objc-annotations_2.8.jar"
 
 [entries.coord]
 group = "com.google.j2objc"
 artifact = "j2objc-annotations"
-version = "1.3"
+version = "2.8"
 packaging = "jar"
 [entries.file_digest]
-fingerprint = "21af30c92267bd6122c0e0b4d20cccb6641a37eaf956c6540ec471d584e64a7b"
-serialized_bytes_length = 8781
+fingerprint = "f02a95fa1a5e95edb3ed859fd0fb7df709d121a35290eff8b74dce2ab7f4d6ed"
+serialized_bytes_length = 9301
 [[entries]]
 file_name = "junit_junit_4.13.2.jar"
 [[entries.directDependencies]]
@@ -186,16 +187,97 @@ serialized_bytes_length = 384581
 [[entries]]
 directDependencies = []
 dependencies = []
-file_name = "org.checkerframework_checker-qual_3.12.0.jar"
+file_name = "org.checkerframework_checker-qual_3.41.0.jar"
 
 [entries.coord]
 group = "org.checkerframework"
 artifact = "checker-qual"
-version = "3.12.0"
+version = "3.41.0"
 packaging = "jar"
 [entries.file_digest]
-fingerprint = "ff10785ac2a357ec5de9c293cb982a2cbb605c0309ea4cc1cb9b9bc6dbe7f3cb"
-serialized_bytes_length = 208835
+fingerprint = "2f9f245bf68e4259d610894f2406dc1f6363dc639302bd566e8272e4f4541172"
+serialized_bytes_length = 228963
+[[entries]]
+file_name = "org.clojure_clojure_1.12.0.jar"
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "core.specs.alpha"
+version = "0.4.74"
+packaging = "jar"
+
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "spec.alpha"
+version = "0.5.238"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "core.specs.alpha"
+version = "0.4.74"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "spec.alpha"
+version = "0.5.238"
+packaging = "jar"
+
+
+[entries.coord]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.12.0"
+packaging = "jar"
+[entries.file_digest]
+fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
+serialized_bytes_length = 4227052
+[[entries]]
+file_name = "org.clojure_core.specs.alpha_0.4.74.jar"
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.12.0"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.12.0"
+packaging = "jar"
+
+
+[entries.coord]
+group = "org.clojure"
+artifact = "core.specs.alpha"
+version = "0.4.74"
+packaging = "jar"
+[entries.file_digest]
+fingerprint = "eb73ac08cf49ba840c88ba67beef11336ca554333d9408808d78946e0feb9ddb"
+serialized_bytes_length = 4306
+[[entries]]
+file_name = "org.clojure_spec.alpha_0.5.238.jar"
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.12.0"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.12.0"
+packaging = "jar"
+
+
+[entries.coord]
+group = "org.clojure"
+artifact = "spec.alpha"
+version = "0.5.238"
+packaging = "jar"
+[entries.file_digest]
+fingerprint = "94cd99b6ea639641f37af4860a643b6ed399ee5a8be5d717cff0b663c8d75077"
+serialized_bytes_length = 636643
 [[entries]]
 directDependencies = []
 dependencies = []
