@@ -13,3 +13,6 @@ jvm_artifact(
     version="1.12.0",
     resolve="java21",
 )
+
+clojure_sources(name="java17",resolve="java17",sources=["**/*.clj"])
+clojure_sources(name="java21",resolve="java21",sources=["**/*.clj"])
