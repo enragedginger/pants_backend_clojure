@@ -17,9 +17,11 @@ jvm_artifact(
 java_sources(
     name="java17",
     resolve="java17",
+    sources=["**/*.java"]
 )
 
 java_sources(
     name="java21",
     resolve="java21",
+    sources=["**/*.java"]
 )
