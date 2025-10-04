@@ -3,6 +3,8 @@
 from clojure_backend.target_types import (
     ClojureSourceTarget,
     ClojureSourcesGeneratorTarget,
+    ClojureTestTarget,
+    ClojureTestsGeneratorTarget,
     rules as target_type_rules,
 )
 
@@ -12,6 +14,8 @@ def target_types():
     return [
         ClojureSourceTarget,
         ClojureSourcesGeneratorTarget,
+        ClojureTestTarget,
+        ClojureTestsGeneratorTarget,
     ]
 
 

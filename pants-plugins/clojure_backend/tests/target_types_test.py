@@ -9,6 +9,12 @@ from clojure_backend.target_types import (
     ClojureSourcesGeneratorSourcesField,
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,
+    ClojureTestExtraEnvVarsField,
+    ClojureTestSourceField,
+    ClojureTestsGeneratorSourcesField,
+    ClojureTestsGeneratorTarget,
+    ClojureTestTarget,
+    ClojureTestTimeoutField,
 )
 from clojure_backend.target_types import rules as target_types_rules
 from pants.build_graph.address import Address
@@ -27,7 +33,12 @@ from pants.testutil.rule_runner import RuleRunner
 @pytest.fixture
 def rule_runner() -> RuleRunner:
     rule_runner = RuleRunner(
-        target_types=[ClojureSourceTarget, ClojureSourcesGeneratorTarget],
+        target_types=[
+            ClojureSourceTarget,
+            ClojureSourcesGeneratorTarget,
+            ClojureTestTarget,
+            ClojureTestsGeneratorTarget,
+        ],
         rules=[
             *target_types_rules(),
             *jvm_common.rules(),
@@ -85,7 +96,14 @@ def test_clojure_sources_field_extensions() -> None:
 
 def test_clojure_sources_default_globs() -> None:
     """Test that clojure_sources has correct default glob patterns."""
-    assert ClojureSourcesGeneratorSourcesField.default == ("*.clj", "*.cljc")
+    assert ClojureSourcesGeneratorSourcesField.default == (
+        "*.clj",
+        "*.cljc",
+        "!*_test.clj",
+        "!*_test.cljc",
+        "!test_*.clj",
+        "!test_*.cljc",
+    )
 
 
 def test_generate_clojure_source_targets(rule_runner: RuleRunner) -> None:
@@ -134,17 +152,11 @@ def test_generate_clojure_source_targets(rule_runner: RuleRunner) -> None:
 
 def test_clojure_source_with_resolve(rule_runner: RuleRunner) -> None:
     """Test that clojure_source respects the resolve field."""
+    rule_runner.write_files({"src/clj/BUILD": 'clojure_sources(name="lib", resolve="java17")\n', "src/clj/example.clj": ""})
     assert_generated(
         rule_runner,
-        Address("src/clj", target_name="lib", relative_file_path="example.clj"),
-        build_content=dedent(
-            """\
-            clojure_sources(
-                name="lib",
-                resolve="java17",
-            )
-            """
-        ),
+        Address("src/clj", target_name="lib"),
+        build_content='clojure_sources(name="lib", resolve="java17")\n',
         expected_targets={
             ClojureSourceTarget(
                 {
@@ -159,17 +171,11 @@ def test_clojure_source_with_resolve(rule_runner: RuleRunner) -> None:
 
 def test_clojure_source_with_jdk(rule_runner: RuleRunner) -> None:
     """Test that clojure_source respects the jdk field."""
+    rule_runner.write_files({"src/clj/BUILD": 'clojure_sources(name="lib", jdk="17")\n', "src/clj/example.clj": ""})
     assert_generated(
         rule_runner,
-        Address("src/clj", target_name="lib", relative_file_path="example.clj"),
-        build_content=dedent(
-            """\
-            clojure_sources(
-                name="lib",
-                jdk="17",
-            )
-            """
-        ),
+        Address("src/clj", target_name="lib"),
+        build_content='clojure_sources(name="lib", jdk="17")\n',
         expected_targets={
             ClojureSourceTarget(
                 {
@@ -184,17 +190,11 @@ def test_clojure_source_with_jdk(rule_runner: RuleRunner) -> None:
 
 def test_clojure_source_with_dependencies(rule_runner: RuleRunner) -> None:
     """Test that clojure_source respects the dependencies field."""
+    rule_runner.write_files({"src/clj/BUILD": 'clojure_sources(name="lib", dependencies=["//3rdparty/jvm:clojure"])\n', "src/clj/example.clj": ""})
     assert_generated(
         rule_runner,
-        Address("src/clj", target_name="lib", relative_file_path="example.clj"),
-        build_content=dedent(
-            """\
-            clojure_sources(
-                name="lib",
-                dependencies=["//3rdparty/jvm:clojure"],
-            )
-            """
-        ),
+        Address("src/clj", target_name="lib"),
+        build_content='clojure_sources(name="lib", dependencies=["//3rdparty/jvm:clojure"])\n',
         expected_targets={
             ClojureSourceTarget(
                 {
@@ -241,3 +241,134 @@ def test_clojure_sources_excludes_test_files(rule_runner: RuleRunner) -> None:
     assert len(generated_targets) == 1
     source_files = {t[ClojureSourceField].value for t in generated_targets}
     assert source_files == {"example.clj"}
+
+
+# -----------------------------------------------------------------------------------------------
+# Test target type tests
+# -----------------------------------------------------------------------------------------------
+
+
+def test_clojure_test_field_extensions() -> None:
+    """Test that ClojureTestSourceField accepts .clj and .cljc files."""
+    assert ClojureTestSourceField.expected_file_extensions == (".clj", ".cljc")
+
+
+def test_clojure_tests_default_globs() -> None:
+    """Test that clojure_tests has correct default glob patterns for test files."""
+    assert ClojureTestsGeneratorSourcesField.default == (
+        "*_test.clj",
+        "*_test.cljc",
+        "test_*.clj",
+        "test_*.cljc",
+    )
+
+
+def test_clojure_sources_excludes_tests_by_default() -> None:
+    """Test that clojure_sources excludes test files by default."""
+    assert "!*_test.clj" in ClojureSourcesGeneratorSourcesField.default
+    assert "!*_test.cljc" in ClojureSourcesGeneratorSourcesField.default
+    assert "!test_*.clj" in ClojureSourcesGeneratorSourcesField.default
+    assert "!test_*.cljc" in ClojureSourcesGeneratorSourcesField.default
+
+
+def test_generate_clojure_test_targets(rule_runner: RuleRunner) -> None:
+    """Test that clojure_tests generates individual clojure_test targets."""
+    rule_runner.write_files(
+        {
+            "test/clj/BUILD": "clojure_tests(name='tests')\n",
+            "test/clj/example_test.clj": "(ns example.core-test)",
+            "test/clj/util_test.clj": "(ns example.util-test)",
+        }
+    )
+    rule_runner.set_options(
+        [
+            f"--jvm-resolves={repr(_JVM_RESOLVES)}",
+            "--jvm-default-resolve=jvm-default",
+        ]
+    )
+
+    parametrizations = rule_runner.request(
+        _TargetParametrizations,
+        [
+            _TargetParametrizationsRequest(
+                Address("test/clj", target_name="tests"),
+                description_of_origin="tests",
+            ),
+        ],
+    )
+
+    generated_targets = {
+        t for parametrization in parametrizations for t in parametrization.parametrization.values()
+    }
+
+    assert len(generated_targets) == 2
+    assert all(isinstance(t, ClojureTestTarget) for t in generated_targets)
+
+    source_files = {t[ClojureTestSourceField].value for t in generated_targets}
+    assert source_files == {"example_test.clj", "util_test.clj"}
+
+
+def test_clojure_test_with_timeout(rule_runner: RuleRunner) -> None:
+    """Test that clojure_test respects the timeout field."""
+    rule_runner.write_files(
+        {"test/clj/BUILD": 'clojure_tests(name="tests", timeout=120)\n', "test/clj/example_test.clj": ""}
+    )
+    assert_generated(
+        rule_runner,
+        Address("test/clj", target_name="tests"),
+        build_content='clojure_tests(name="tests", timeout=120)\n',
+        expected_targets={
+            ClojureTestTarget(
+                {
+                    ClojureTestSourceField.alias: "example_test.clj",
+                    ClojureTestTimeoutField.alias: 120,
+                },
+                Address("test/clj", target_name="tests", relative_file_path="example_test.clj"),
+            ),
+        },
+    )
+
+
+def test_clojure_test_with_resolve(rule_runner: RuleRunner) -> None:
+    """Test that clojure_test respects the resolve field."""
+    rule_runner.write_files(
+        {"test/clj/BUILD": 'clojure_tests(name="tests", resolve="java17")\n', "test/clj/example_test.clj": ""}
+    )
+    assert_generated(
+        rule_runner,
+        Address("test/clj", target_name="tests"),
+        build_content='clojure_tests(name="tests", resolve="java17")\n',
+        expected_targets={
+            ClojureTestTarget(
+                {
+                    ClojureTestSourceField.alias: "example_test.clj",
+                    JvmResolveField.alias: "java17",
+                },
+                Address("test/clj", target_name="tests", relative_file_path="example_test.clj"),
+            ),
+        },
+    )
+
+
+def test_clojure_tests_with_dependencies(rule_runner: RuleRunner) -> None:
+    """Test that clojure_test respects the dependencies field."""
+    rule_runner.write_files(
+        {
+            "test/clj/BUILD": 'clojure_tests(name="tests", dependencies=["//src:lib"])\n',
+            "test/clj/example_test.clj": "",
+        }
+    )
+    assert_generated(
+        rule_runner,
+        Address("test/clj", target_name="tests"),
+        build_content='clojure_tests(name="tests", dependencies=["//src:lib"])\n',
+        expected_targets={
+            ClojureTestTarget(
+                {
+                    ClojureTestSourceField.alias: "example_test.clj",
+                    JvmDependenciesField.alias: ["//src:lib"],
+                },
+                Address("test/clj", target_name="tests", relative_file_path="example_test.clj"),
+            ),
+        },
+    )

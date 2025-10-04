@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pants.core.goals.test import (
+    TestExtraEnvVarsField,
+    TestTimeoutField,
+)
 from pants.engine.rules import collect_rules
 from pants.engine.target import (
     COMMON_TARGET_FIELDS,
@@ -63,7 +67,15 @@ class ClojureSourceTarget(Target):
 
 
 class ClojureSourcesGeneratorSourcesField(ClojureGeneratorSourcesField):
-    default = ("*.clj", "*.cljc")
+    default = (
+        "*.clj",
+        "*.cljc",
+        # Exclude test files by default
+        "!*_test.clj",
+        "!*_test.cljc",
+        "!test_*.clj",
+        "!test_*.cljc",
+    )
     help = generate_multiple_sources_field_help_message(
         "Example: `sources=['Example.clj', 'New*.clj', '!OldExample.clj']`"
     )
@@ -85,6 +97,64 @@ class ClojureSourcesGeneratorTarget(TargetFilesGenerator):
         JvmProvidesTypesField,
     )
     help = "Generate a `clojure_source` target for each file in the `sources` field."
+
+
+# -----------------------------------------------------------------------------------------------
+# `clojure_test` and `clojure_tests` targets
+# -----------------------------------------------------------------------------------------------
+
+
+class ClojureTestSourceField(ClojureSourceField):
+    """A Clojure test file using clojure.test."""
+
+
+class ClojureTestTimeoutField(TestTimeoutField):
+    """Timeout for Clojure tests."""
+
+
+class ClojureTestExtraEnvVarsField(TestExtraEnvVarsField):
+    """Extra environment variables for Clojure tests."""
+
+
+class ClojureTestTarget(Target):
+    alias = "clojure_test"
+    core_fields = (
+        *COMMON_TARGET_FIELDS,
+        ClojureTestSourceField,
+        ClojureTestTimeoutField,
+        ClojureTestExtraEnvVarsField,
+        JvmDependenciesField,
+        JvmResolveField,
+        JvmProvidesTypesField,
+        JvmJdkField,
+    )
+    help = "A single Clojure test file using clojure.test."
+
+
+class ClojureTestsGeneratorSourcesField(ClojureGeneratorSourcesField):
+    default = ("*_test.clj", "*_test.cljc", "test_*.clj", "test_*.cljc")
+    help = generate_multiple_sources_field_help_message(
+        "Example: `sources=['*_test.clj', '!skip_test.clj']`"
+    )
+
+
+class ClojureTestsGeneratorTarget(TargetFilesGenerator):
+    alias = "clojure_tests"
+    core_fields = (
+        *COMMON_TARGET_FIELDS,
+        ClojureTestsGeneratorSourcesField,
+    )
+    generated_target_cls = ClojureTestTarget
+    copied_fields = COMMON_TARGET_FIELDS
+    moved_fields = (
+        ClojureTestTimeoutField,
+        ClojureTestExtraEnvVarsField,
+        JvmDependenciesField,
+        JvmJdkField,
+        JvmProvidesTypesField,
+        JvmResolveField,
+    )
+    help = "Generate a `clojure_test` target for each file in the `sources` field."
 
 
 def rules():
