@@ -1,0 +1,2 @@
+clojure_tests(name="java17",resolve="java17",sources=["**/*.clj"])
+clojure_tests(name="java21",resolve="java21",sources=["**/*.clj"])
