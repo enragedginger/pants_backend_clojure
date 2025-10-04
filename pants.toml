@@ -1,8 +1,10 @@
 [GLOBAL]
 pants_version = "2.28.0"
 process_execution_local_enable_nailgun = false
+pythonpath = ["%(buildroot)s/pants-plugins"]
 backend_packages = [
   "pants.backend.experimental.java",
+  "clojure_backend",
 ]
 
 [jvm.resolves]

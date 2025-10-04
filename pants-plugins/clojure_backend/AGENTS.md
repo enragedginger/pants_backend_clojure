@@ -1,0 +1,1 @@
+Don't put the license at the top of the source files even though it's done that way in the main Pants repo.
