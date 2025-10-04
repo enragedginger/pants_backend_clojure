@@ -1,2 +1,10 @@
 [GLOBAL]
 pants_version = "2.28.0"
+process_execution_local_enable_nailgun = false
+backend_packages = [
+  "pants.backend.experimental.java",
+]
+
+[jvm.resolves]
+java17 = "lockfiles/jvm/java17.lock.jsonc"
+java21 = "lockfiles/jvm/java21.lock.jsonc"
