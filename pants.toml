@@ -4,8 +4,22 @@ process_execution_local_enable_nailgun = false
 pythonpath = ["%(buildroot)s/pants-plugins"]
 backend_packages = [
   "pants.backend.experimental.java",
+  "pants.backend.python",
   "clojure_backend",
+  "pants.backend.plugin_development",
 ]
+
+[source]
+root_patterns = [
+  "pants-plugins",
+]
+
+[python]
+enable_resolves = true
+interpreter_constraints = ["==3.11.*"]
+
+[python.resolves]
+pants-plugins = "locks/python/pants-plugins.lock.jsonc"
 
 [jvm.resolves]
 java17 = "locks/jvm/java17.lock.jsonc"
