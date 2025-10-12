@@ -1,5 +1,6 @@
 """Clojure backend for Pants."""
 
+from clojure_backend import clj_test_runner
 from clojure_backend.target_types import (
     ClojureSourceTarget,
     ClojureSourcesGeneratorTarget,
@@ -23,4 +24,5 @@ def rules():
     """Register rules with Pants."""
     return [
         *target_type_rules(),
+        *clj_test_runner.rules(),
     ]
