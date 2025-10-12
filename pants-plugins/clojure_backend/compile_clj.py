@@ -9,6 +9,7 @@ from clojure_backend.target_types import (
     ClojureTestSourceField,
 )
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
+from pants.core.util_rules.stripped_source_files import StrippedSourceFiles
 from pants.engine.fs import Digest, MergeDigests
 from pants.engine.internals.selectors import Get
 from pants.engine.rules import collect_rules, implicitly, rule
@@ -95,11 +96,16 @@ async def compile_clojure_source(
         ),
     )
 
-    # Merge source files with dependency digests
+    # Strip source roots so files are at proper paths for Clojure's namespace resolution
+    # e.g., projects/example/project-a/test/example/project_a/core_test.clj
+    # becomes example/project_a/core_test.clj
+    stripped_sources = await Get(StrippedSourceFiles, SourceFiles, source_files)
+
+    # Merge stripped source files with dependency digests
     merged_digest = await Get(
         Digest,
         MergeDigests([
-            source_files.snapshot.digest,
+            stripped_sources.snapshot.digest,
             *(cpe.digest for cpe in direct_dependency_classpath_entries),
         ]),
     )
@@ -108,7 +114,7 @@ async def compile_clojure_source(
     # The sources will be available at runtime for dynamic compilation
     classpath_entry = ClasspathEntry(
         merged_digest,
-        filenames=source_files.snapshot.files,
+        filenames=stripped_sources.snapshot.files,
         dependencies=direct_dependency_classpath_entries,
     )
 

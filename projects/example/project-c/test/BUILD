@@ -1,2 +1,18 @@
-clojure_tests(name="java17",resolve="java17",sources=["**/*.clj"])
-clojure_tests(name="java21",resolve="java21",sources=["**/*.clj"])
+clojure_tests(
+    name="java17",
+    resolve="java17",
+    sources=["**/*.clj"],
+    dependencies=[
+        "//projects/example/project-c/src:java17",
+        "//projects/example/project-b/src:clojure-java17",
+    ],
+)
+clojure_tests(
+    name="java21",
+    resolve="java21",
+    sources=["**/*.clj"],
+    dependencies=[
+        "//projects/example/project-c/src:java21",
+        "//projects/example/project-b/src:clojure-java21",
+    ],
+)

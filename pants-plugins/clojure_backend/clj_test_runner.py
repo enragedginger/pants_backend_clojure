@@ -31,10 +31,10 @@ from pants.engine.process import (
     ProcessWithRetries,
     execute_process_with_retry,
 )
-from pants.engine.rules import collect_rules, rule
+from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import FieldSet, SourcesField, TransitiveTargets, TransitiveTargetsRequest
 from pants.engine.unions import UnionRule
-from pants.jvm.classpath import Classpath
+from pants.jvm.classpath import classpath as classpath_get
 from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest, JvmProcess
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmDependenciesField, JvmJdkField
@@ -91,13 +91,11 @@ async def setup_clojure_test_for_target(
     jdk_request = JdkRequest.from_field(request.field_set.jdk_version)
     transitive_targets_request = TransitiveTargetsRequest([request.field_set.address])
 
-    jdk, transitive_targets = await MultiGet(
+    jdk, transitive_targets, classpath = await MultiGet(
         Get(JdkEnvironment, JdkRequest, jdk_request),
         Get(TransitiveTargets, TransitiveTargetsRequest, transitive_targets_request),
+        classpath_get(**implicitly(Addresses([request.field_set.address]))),
     )
-
-    # Build classpath for test and dependencies
-    classpath = await Get(Classpath, Addresses([request.field_set.address]))
 
     # Get test source file to parse namespace
     test_source_files = await Get(
@@ -114,10 +112,20 @@ async def setup_clojure_test_for_target(
         raise ValueError(f"Could not find namespace declaration in {test_file_path}")
     test_namespace = match.group(1)
 
-    # Use classpath digests as input (they already include all sources)
+    # Get all source files (both production and test code)
+    all_source_files = await Get(
+        SourceFiles,
+        SourceFilesRequest(
+            (tgt.get(SourcesField) for tgt in transitive_targets.closure),
+            for_sources_types=(ClojureSourceField, ClojureTestSourceField),
+            enable_codegen=False,
+        ),
+    )
+
+    # Merge classpath JARs with all source files
     input_digest = await Get(
         Digest,
-        MergeDigests(classpath.digests()),
+        MergeDigests([*classpath.digests(), all_source_files.snapshot.digest]),
     )
 
     # Get environment variables
