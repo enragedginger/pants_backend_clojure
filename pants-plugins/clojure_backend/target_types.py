@@ -138,6 +138,20 @@ class ClojureTestsGeneratorSourcesField(ClojureGeneratorSourcesField):
     )
 
 
+@dataclass(frozen=True)
+class ClojureTestFieldSet(FieldSet):
+    required_fields = (ClojureTestSourceField,)
+
+    sources: ClojureTestSourceField
+
+
+@dataclass(frozen=True)
+class ClojureTestGeneratorFieldSet(FieldSet):
+    required_fields = (ClojureTestsGeneratorSourcesField,)
+
+    sources: ClojureTestsGeneratorSourcesField
+
+
 class ClojureTestsGeneratorTarget(TargetFilesGenerator):
     alias = "clojure_tests"
     core_fields = (
