@@ -1,1 +1,0 @@
-(ns example.project-a.core-test)
