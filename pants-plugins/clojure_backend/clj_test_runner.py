@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from clojure_backend.target_types import (
+    ClojureSourceField,
     ClojureTestExtraEnvVarsField,
     ClojureTestSourceField,
     ClojureTestTimeoutField,
@@ -81,27 +82,6 @@ class TestSetup:
 
 
 @rule(level=LogLevel.DEBUG)
-async def get_test_namespace(test_file: str) -> str:
-    """Extract namespace from Clojure test file."""
-    # Read the file content
-    digest = await Get(Digest, PathGlobs([test_file]))
-    digest_contents = await Get(DigestContents, Digest, digest)
-
-    if not digest_contents:
-        raise ValueError(f"Could not read test file: {test_file}")
-
-    # Parse (ns ...) form
-    # Simple regex: (ns namespace.name ...)
-    content = digest_contents[0].content.decode("utf-8")
-    match = re.search(r"\(ns\s+([a-z0-9\-_.]+)", content, re.MULTILINE)
-
-    if not match:
-        raise ValueError(f"Could not find namespace declaration in {test_file}")
-
-    return match.group(1)
-
-
-@rule(level=LogLevel.DEBUG)
 async def setup_clojure_test_for_target(
     request: TestSetupRequest,
     jvm: JvmSubsystem,
@@ -119,19 +99,25 @@ async def setup_clojure_test_for_target(
     # Build classpath for test and dependencies
     classpath = await Get(Classpath, Addresses([request.field_set.address]))
 
-    # Get source files for resource access
-    source_files = await Get(
+    # Get test source file to parse namespace
+    test_source_files = await Get(
         SourceFiles,
-        SourceFilesRequest(
-            (dep.get(SourcesField) for dep in transitive_targets.dependencies),
-            enable_codegen=True,
-        ),
+        SourceFilesRequest([request.field_set.sources]),
     )
 
-    # Merge all input digests
+    # Extract test namespace from source file
+    test_file_path = test_source_files.files[0]
+    digest_contents = await Get(DigestContents, Digest, test_source_files.snapshot.digest)
+    content = digest_contents[0].content.decode("utf-8")
+    match = re.search(r"\(ns\s+([a-z0-9\-_.]+)", content, re.MULTILINE)
+    if not match:
+        raise ValueError(f"Could not find namespace declaration in {test_file_path}")
+    test_namespace = match.group(1)
+
+    # Use classpath digests as input (they already include all sources)
     input_digest = await Get(
         Digest,
-        MergeDigests([*classpath.digests(), source_files.snapshot.digest]),
+        MergeDigests(classpath.digests()),
     )
 
     # Get environment variables
@@ -139,9 +125,6 @@ async def setup_clojure_test_for_target(
         EnvironmentVars,
         EnvironmentVarsRequest(request.field_set.extra_env_vars.value or ()),
     )
-
-    # Extract test namespace from source file
-    test_namespace = await Get(str, str, request.field_set.sources.value)
 
     # Output directory for test results (for future XML reports)
     reports_dir = f"__reports/{request.field_set.address.path_safe_spec}"
@@ -169,7 +152,7 @@ async def setup_clojure_test_for_target(
 
     process = JvmProcess(
         jdk=jdk,
-        classpath_entries=list(classpath.args()),
+        classpath_entries=[".", *classpath.args()],
         argv=[
             *extra_jvm_args,
             "clojure.main",
@@ -177,7 +160,7 @@ async def setup_clojure_test_for_target(
             test_runner_code,
         ],
         input_digest=input_digest,
-        extra_env=field_set_extra_env.env,
+        extra_env=field_set_extra_env,
         extra_jvm_options=(),
         extra_nailgun_keys=(),
         output_directories=(reports_dir,),
