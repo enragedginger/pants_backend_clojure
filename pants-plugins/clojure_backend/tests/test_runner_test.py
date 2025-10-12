@@ -109,8 +109,7 @@ def test_simple_passing_test(rule_runner: RuleRunner) -> None:
                 #
                 # --- BEGIN PANTS LOCKFILE METADATA: DO NOT EDIT OR REMOVE ---
                 # {
-                #   "version": 3,
-                #   "valid_for_interpreter_constraints": [],
+                #   "version": 1,
                 #   "generated_with_requirements": [
                 #     "org.clojure:clojure:1.11.1"
                 #   ]
@@ -130,6 +129,16 @@ def test_simple_passing_test(rule_runner: RuleRunner) -> None:
                 artifact = "spec.alpha"
                 version = "0.3.218"
 
+                [[entries.dependencies]]
+                group = "org.clojure"
+                artifact = "core.specs.alpha"
+                version = "0.2.62"
+
+                [[entries.dependencies]]
+                group = "org.clojure"
+                artifact = "spec.alpha"
+                version = "0.3.218"
+
                 [entries.coord]
                 group = "org.clojure"
                 artifact = "clojure"
@@ -141,6 +150,8 @@ def test_simple_passing_test(rule_runner: RuleRunner) -> None:
 
                 [[entries]]
                 file_name = "org.clojure_core.specs.alpha_0.2.62.jar"
+                directDependencies = []
+                dependencies = []
 
                 [entries.coord]
                 group = "org.clojure"
@@ -153,6 +164,8 @@ def test_simple_passing_test(rule_runner: RuleRunner) -> None:
 
                 [[entries]]
                 file_name = "org.clojure_spec.alpha_0.3.218.jar"
+                directDependencies = []
+                dependencies = []
 
                 [entries.coord]
                 group = "org.clojure"
@@ -216,8 +229,7 @@ def test_simple_failing_test(rule_runner: RuleRunner) -> None:
                 #
                 # --- BEGIN PANTS LOCKFILE METADATA: DO NOT EDIT OR REMOVE ---
                 # {
-                #   "version": 3,
-                #   "valid_for_interpreter_constraints": [],
+                #   "version": 1,
                 #   "generated_with_requirements": [
                 #     "org.clojure:clojure:1.11.1"
                 #   ]
@@ -237,6 +249,16 @@ def test_simple_failing_test(rule_runner: RuleRunner) -> None:
                 artifact = "spec.alpha"
                 version = "0.3.218"
 
+                [[entries.dependencies]]
+                group = "org.clojure"
+                artifact = "core.specs.alpha"
+                version = "0.2.62"
+
+                [[entries.dependencies]]
+                group = "org.clojure"
+                artifact = "spec.alpha"
+                version = "0.3.218"
+
                 [entries.coord]
                 group = "org.clojure"
                 artifact = "clojure"
@@ -248,6 +270,8 @@ def test_simple_failing_test(rule_runner: RuleRunner) -> None:
 
                 [[entries]]
                 file_name = "org.clojure_core.specs.alpha_0.2.62.jar"
+                directDependencies = []
+                dependencies = []
 
                 [entries.coord]
                 group = "org.clojure"
@@ -260,6 +284,8 @@ def test_simple_failing_test(rule_runner: RuleRunner) -> None:
 
                 [[entries]]
                 file_name = "org.clojure_spec.alpha_0.3.218.jar"
+                directDependencies = []
+                dependencies = []
 
                 [entries.coord]
                 group = "org.clojure"
@@ -321,8 +347,7 @@ def test_test_with_timeout(rule_runner: RuleRunner) -> None:
                 #
                 # --- BEGIN PANTS LOCKFILE METADATA: DO NOT EDIT OR REMOVE ---
                 # {
-                #   "version": 3,
-                #   "valid_for_interpreter_constraints": [],
+                #   "version": 1,
                 #   "generated_with_requirements": [
                 #     "org.clojure:clojure:1.11.1"
                 #   ]
@@ -342,6 +367,16 @@ def test_test_with_timeout(rule_runner: RuleRunner) -> None:
                 artifact = "spec.alpha"
                 version = "0.3.218"
 
+                [[entries.dependencies]]
+                group = "org.clojure"
+                artifact = "core.specs.alpha"
+                version = "0.2.62"
+
+                [[entries.dependencies]]
+                group = "org.clojure"
+                artifact = "spec.alpha"
+                version = "0.3.218"
+
                 [entries.coord]
                 group = "org.clojure"
                 artifact = "clojure"
@@ -353,6 +388,8 @@ def test_test_with_timeout(rule_runner: RuleRunner) -> None:
 
                 [[entries]]
                 file_name = "org.clojure_core.specs.alpha_0.2.62.jar"
+                directDependencies = []
+                dependencies = []
 
                 [entries.coord]
                 group = "org.clojure"
@@ -365,6 +402,8 @@ def test_test_with_timeout(rule_runner: RuleRunner) -> None:
 
                 [[entries]]
                 file_name = "org.clojure_spec.alpha_0.3.218.jar"
+                directDependencies = []
+                dependencies = []
 
                 [entries.coord]
                 group = "org.clojure"
