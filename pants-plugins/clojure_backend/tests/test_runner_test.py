@@ -13,6 +13,7 @@ from clojure_backend.target_types import (
 from clojure_backend.target_types import rules as target_types_rules
 from clojure_backend.clj_test_runner import ClojureTestFieldSet, ClojureTestRequest
 from clojure_backend.clj_test_runner import rules as test_runner_rules
+from clojure_backend import compile_clj
 from pants.backend.java.target_types import JavaSourcesGeneratorTarget
 from pants.core.goals.test import TestResult
 from pants.core.util_rules import config_files, source_files, stripped_source_files, system_binaries
@@ -33,6 +34,7 @@ def rule_runner() -> RuleRunner:
         preserve_tmpdirs=True,
         rules=[
             *classpath.rules(),
+            *compile_clj.rules(),
             *config_files.rules(),
             *coursier_fetch_rules(),
             *coursier_setup_rules(),
@@ -106,39 +108,60 @@ def test_simple_passing_test(rule_runner: RuleRunner) -> None:
                 # To regenerate, run: `pants generate-lockfiles --resolve=jvm-default`
                 #
                 # --- BEGIN PANTS LOCKFILE METADATA: DO NOT EDIT OR REMOVE ---
-                # {{
+                # {
                 #   "version": 3,
                 #   "valid_for_interpreter_constraints": [],
                 #   "generated_with_requirements": [
                 #     "org.clojure:clojure:1.11.1"
                 #   ]
-                # }}
+                # }
                 # --- END PANTS LOCKFILE METADATA ---
 
                 [[entries]]
-                coord = "org.clojure:clojure:1.11.1"
-                file_digest = {{
-                  fingerprint = "bb425f4154e1f8e21fcf1c26e3e3c5aa02a98c2e3ade3603fb11c6b936e98cbd"
-                  serialized_bytes_length = 3908431
-                }}
+                file_name = "org.clojure_clojure_1.11.1.jar"
+
                 [[entries.directDependencies]]
-                coord = "org.clojure:core.specs.alpha:0.2.62"
+                group = "org.clojure"
+                artifact = "core.specs.alpha"
+                version = "0.2.62"
+
                 [[entries.directDependencies]]
-                coord = "org.clojure:spec.alpha:0.3.218"
+                group = "org.clojure"
+                artifact = "spec.alpha"
+                version = "0.3.218"
+
+                [entries.coord]
+                group = "org.clojure"
+                artifact = "clojure"
+                version = "1.11.1"
+
+                [entries.file_digest]
+                fingerprint = "bb425f4154e1f8e21fcf1c26e3e3c5aa02a98c2e3ade3603fb11c6b936e98cbd"
+                serialized_bytes_length = 3908431
 
                 [[entries]]
-                coord = "org.clojure:core.specs.alpha:0.2.62"
-                file_digest = {{
-                  fingerprint = "07ed4e08f8b4e7eeb3c7c8e7a260c1f45375b84d6a3e3e1e7e29f1a5aeb37cf3"
-                  serialized_bytes_length = 12130
-                }}
+                file_name = "org.clojure_core.specs.alpha_0.2.62.jar"
+
+                [entries.coord]
+                group = "org.clojure"
+                artifact = "core.specs.alpha"
+                version = "0.2.62"
+
+                [entries.file_digest]
+                fingerprint = "07ed4e08f8b4e7eeb3c7c8e7a260c1f45375b84d6a3e3e1e7e29f1a5aeb37cf3"
+                serialized_bytes_length = 12130
 
                 [[entries]]
-                coord = "org.clojure:spec.alpha:0.3.218"
-                file_digest = {{
-                  fingerprint = "b8e22da8b0f08ee7c8e8e9e8e8f8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8"
-                  serialized_bytes_length = 46596
-                }}
+                file_name = "org.clojure_spec.alpha_0.3.218.jar"
+
+                [entries.coord]
+                group = "org.clojure"
+                artifact = "spec.alpha"
+                version = "0.3.218"
+
+                [entries.file_digest]
+                fingerprint = "b8e22da8b0f08ee7c8e8e9e8e8f8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8"
+                serialized_bytes_length = 46596
                 """
             ),
             "BUILD": dedent(
@@ -192,39 +215,60 @@ def test_simple_failing_test(rule_runner: RuleRunner) -> None:
                 # To regenerate, run: `pants generate-lockfiles --resolve=jvm-default`
                 #
                 # --- BEGIN PANTS LOCKFILE METADATA: DO NOT EDIT OR REMOVE ---
-                # {{
+                # {
                 #   "version": 3,
                 #   "valid_for_interpreter_constraints": [],
                 #   "generated_with_requirements": [
                 #     "org.clojure:clojure:1.11.1"
                 #   ]
-                # }}
+                # }
                 # --- END PANTS LOCKFILE METADATA ---
 
                 [[entries]]
-                coord = "org.clojure:clojure:1.11.1"
-                file_digest = {{
-                  fingerprint = "bb425f4154e1f8e21fcf1c26e3e3c5aa02a98c2e3ade3603fb11c6b936e98cbd"
-                  serialized_bytes_length = 3908431
-                }}
+                file_name = "org.clojure_clojure_1.11.1.jar"
+
                 [[entries.directDependencies]]
-                coord = "org.clojure:core.specs.alpha:0.2.62"
+                group = "org.clojure"
+                artifact = "core.specs.alpha"
+                version = "0.2.62"
+
                 [[entries.directDependencies]]
-                coord = "org.clojure:spec.alpha:0.3.218"
+                group = "org.clojure"
+                artifact = "spec.alpha"
+                version = "0.3.218"
+
+                [entries.coord]
+                group = "org.clojure"
+                artifact = "clojure"
+                version = "1.11.1"
+
+                [entries.file_digest]
+                fingerprint = "bb425f4154e1f8e21fcf1c26e3e3c5aa02a98c2e3ade3603fb11c6b936e98cbd"
+                serialized_bytes_length = 3908431
 
                 [[entries]]
-                coord = "org.clojure:core.specs.alpha:0.2.62"
-                file_digest = {{
-                  fingerprint = "07ed4e08f8b4e7eeb3c7c8e7a260c1f45375b84d6a3e3e1e7e29f1a5aeb37cf3"
-                  serialized_bytes_length = 12130
-                }}
+                file_name = "org.clojure_core.specs.alpha_0.2.62.jar"
+
+                [entries.coord]
+                group = "org.clojure"
+                artifact = "core.specs.alpha"
+                version = "0.2.62"
+
+                [entries.file_digest]
+                fingerprint = "07ed4e08f8b4e7eeb3c7c8e7a260c1f45375b84d6a3e3e1e7e29f1a5aeb37cf3"
+                serialized_bytes_length = 12130
 
                 [[entries]]
-                coord = "org.clojure:spec.alpha:0.3.218"
-                file_digest = {{
-                  fingerprint = "b8e22da8b0f08ee7c8e8e9e8e8f8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8"
-                  serialized_bytes_length = 46596
-                }}
+                file_name = "org.clojure_spec.alpha_0.3.218.jar"
+
+                [entries.coord]
+                group = "org.clojure"
+                artifact = "spec.alpha"
+                version = "0.3.218"
+
+                [entries.file_digest]
+                fingerprint = "b8e22da8b0f08ee7c8e8e9e8e8f8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8"
+                serialized_bytes_length = 46596
                 """
             ),
             "BUILD": dedent(
@@ -276,39 +320,60 @@ def test_test_with_timeout(rule_runner: RuleRunner) -> None:
                 # To regenerate, run: `pants generate-lockfiles --resolve=jvm-default`
                 #
                 # --- BEGIN PANTS LOCKFILE METADATA: DO NOT EDIT OR REMOVE ---
-                # {{
+                # {
                 #   "version": 3,
                 #   "valid_for_interpreter_constraints": [],
                 #   "generated_with_requirements": [
                 #     "org.clojure:clojure:1.11.1"
                 #   ]
-                # }}
+                # }
                 # --- END PANTS LOCKFILE METADATA ---
 
                 [[entries]]
-                coord = "org.clojure:clojure:1.11.1"
-                file_digest = {{
-                  fingerprint = "bb425f4154e1f8e21fcf1c26e3e3c5aa02a98c2e3ade3603fb11c6b936e98cbd"
-                  serialized_bytes_length = 3908431
-                }}
+                file_name = "org.clojure_clojure_1.11.1.jar"
+
                 [[entries.directDependencies]]
-                coord = "org.clojure:core.specs.alpha:0.2.62"
+                group = "org.clojure"
+                artifact = "core.specs.alpha"
+                version = "0.2.62"
+
                 [[entries.directDependencies]]
-                coord = "org.clojure:spec.alpha:0.3.218"
+                group = "org.clojure"
+                artifact = "spec.alpha"
+                version = "0.3.218"
+
+                [entries.coord]
+                group = "org.clojure"
+                artifact = "clojure"
+                version = "1.11.1"
+
+                [entries.file_digest]
+                fingerprint = "bb425f4154e1f8e21fcf1c26e3e3c5aa02a98c2e3ade3603fb11c6b936e98cbd"
+                serialized_bytes_length = 3908431
 
                 [[entries]]
-                coord = "org.clojure:core.specs.alpha:0.2.62"
-                file_digest = {{
-                  fingerprint = "07ed4e08f8b4e7eeb3c7c8e7a260c1f45375b84d6a3e3e1e7e29f1a5aeb37cf3"
-                  serialized_bytes_length = 12130
-                }}
+                file_name = "org.clojure_core.specs.alpha_0.2.62.jar"
+
+                [entries.coord]
+                group = "org.clojure"
+                artifact = "core.specs.alpha"
+                version = "0.2.62"
+
+                [entries.file_digest]
+                fingerprint = "07ed4e08f8b4e7eeb3c7c8e7a260c1f45375b84d6a3e3e1e7e29f1a5aeb37cf3"
+                serialized_bytes_length = 12130
 
                 [[entries]]
-                coord = "org.clojure:spec.alpha:0.3.218"
-                file_digest = {{
-                  fingerprint = "b8e22da8b0f08ee7c8e8e9e8e8f8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8"
-                  serialized_bytes_length = 46596
-                }}
+                file_name = "org.clojure_spec.alpha_0.3.218.jar"
+
+                [entries.coord]
+                group = "org.clojure"
+                artifact = "spec.alpha"
+                version = "0.3.218"
+
+                [entries.file_digest]
+                fingerprint = "b8e22da8b0f08ee7c8e8e9e8e8f8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8e8"
+                serialized_bytes_length = 46596
                 """
             ),
             "BUILD": dedent(

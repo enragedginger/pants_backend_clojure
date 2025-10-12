@@ -11,7 +11,7 @@ from clojure_backend.target_types import (
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.engine.fs import Digest, MergeDigests
 from pants.engine.internals.selectors import Get
-from pants.engine.rules import collect_rules, rule
+from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.unions import UnionRule
 from pants.jvm.compile import (
     ClasspathDependenciesRequest,
@@ -48,7 +48,7 @@ async def compile_clojure_source(
     """
     # Get compiled dependencies
     fallible_result = await compile_classpath_entries(
-        ClasspathDependenciesRequest(request)
+        **implicitly(ClasspathDependenciesRequest(request))
     )
 
     direct_dependency_classpath_entries = fallible_result.if_all_succeeded()
