@@ -9,10 +9,13 @@ backend_packages = [
   "pants.backend.plugin_development",
 ]
 
+[python-infer]
+ambiguity_resolution = "by_source_root"
+unowned_dependency_behavior = "error"
+ignored_unowned_imports = ["resources"]
+
 [source]
-root_patterns = [
-  "pants-plugins",
-]
+marker_filenames = ["BUILD"]
 
 [python]
 enable_resolves = true
@@ -24,3 +27,6 @@ pants-plugins = "locks/python/pants-plugins.lock.jsonc"
 [jvm.resolves]
 java17 = "locks/jvm/java17.lock.jsonc"
 java21 = "locks/jvm/java21.lock.jsonc"
+
+[anonymous-telemetry]
+enabled = false
