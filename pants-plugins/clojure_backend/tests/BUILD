@@ -1,1 +1,0 @@
-python_tests(resolve="pants-plugins")
