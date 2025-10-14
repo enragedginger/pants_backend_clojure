@@ -192,8 +192,6 @@ async def run_clojure_test(
         ProcessWithRetries(process, test_subsystem.attempts_default)
     )
 
-    # For now, we won't generate XML reports (Phase 2)
-    # Just return the process result
     return TestResult.from_fallible_process_result(
         process_results=process_results.results,
         address=field_set.address,
