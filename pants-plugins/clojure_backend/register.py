@@ -1,6 +1,6 @@
 """Clojure backend for Pants."""
 
-from clojure_backend import clj_test_runner, compile_clj
+from clojure_backend import clj_test_runner, compile_clj, dependency_inference
 from clojure_backend.target_types import (
     ClojureSourceTarget,
     ClojureSourcesGeneratorTarget,
@@ -26,4 +26,5 @@ def rules():
         *target_type_rules(),
         *compile_clj.rules(),
         *clj_test_runner.rules(),
+        *dependency_inference.rules(),
     ]
