@@ -7,6 +7,7 @@ from typing import Any
 from clojure_backend.target_types import (
     ClojureSourceField,
     ClojureTestExtraEnvVarsField,
+    ClojureTestFieldSet,
     ClojureTestSourceField,
     ClojureTestTimeoutField,
 )
@@ -49,18 +50,8 @@ class ClojureTestSubsystem(Subsystem):
     skip = SkipOption("test")
 
 
-@dataclass(frozen=True)
-class ClojureTestFieldSet(TestFieldSet):
-    required_fields = (
-        ClojureTestSourceField,
-        JvmJdkField,
-    )
-
-    sources: ClojureTestSourceField
-    timeout: ClojureTestTimeoutField
-    jdk_version: JvmJdkField
-    dependencies: JvmDependenciesField
-    extra_env_vars: ClojureTestExtraEnvVarsField
+# ClojureTestFieldSet is now defined in target_types.py to avoid circular dependencies
+# and allow both the test runner and compiler to use the same field set definition
 
 
 class ClojureTestRequest(TestRequest):

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from pants.core.goals.test import (
     TestExtraEnvVarsField,
+    TestFieldSet,
     TestTimeoutField,
 )
 from pants.engine.rules import collect_rules
@@ -139,10 +140,17 @@ class ClojureTestsGeneratorSourcesField(ClojureGeneratorSourcesField):
 
 
 @dataclass(frozen=True)
-class ClojureTestFieldSet(FieldSet):
-    required_fields = (ClojureTestSourceField,)
+class ClojureTestFieldSet(TestFieldSet):
+    required_fields = (
+        ClojureTestSourceField,
+        JvmJdkField,
+    )
 
     sources: ClojureTestSourceField
+    timeout: ClojureTestTimeoutField
+    jdk_version: JvmJdkField
+    dependencies: JvmDependenciesField
+    extra_env_vars: ClojureTestExtraEnvVarsField
 
 
 @dataclass(frozen=True)
