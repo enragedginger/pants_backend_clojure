@@ -94,6 +94,94 @@ def parse_clojure_requires(source_content: str) -> set[str]:
     return required_namespaces
 
 
+def parse_clojure_imports(source_content: str) -> set[str]:
+    """Extract Java class imports from :import forms.
+
+    Handles both vector and single-class import syntax.
+
+    Examples:
+        (ns example.foo
+          (:import [java.util Date ArrayList]
+                   [java.io File]))
+
+        Returns: {"java.util.Date", "java.util.ArrayList", "java.io.File"}
+
+        (ns example.bar
+          (:import java.util.Date
+                   java.io.File))
+
+        Returns: {"java.util.Date", "java.io.File"}
+    """
+    imported_classes = set()
+
+    # Find the ns form
+    ns_match = re.search(r'\(ns\s+[\w\.\-]+\s*(.*?)(?=\n\(|\Z)', source_content, re.DOTALL)
+    if not ns_match:
+        return imported_classes
+
+    ns_body = ns_match.group(1)
+
+    # Find :import section
+    import_match = re.search(r'\(:import\s+(.*?)(?=\(:|$)', ns_body, re.DOTALL)
+    if not import_match:
+        return imported_classes
+
+    import_body = import_match.group(1)
+
+    # Handle vector syntax: [java.util Date ArrayList]
+    # Match [package Class1 Class2 ...]
+    for match in re.finditer(r'\[([a-zA-Z][\w\.]*)\s+([^\]]+)\]', import_body):
+        package = match.group(1)
+        classes_str = match.group(2)
+        # Split on whitespace to get individual class names
+        class_names = classes_str.split()
+        for class_name in class_names:
+            # Only include valid class names (start with letter, no special chars except _)
+            if re.match(r'^[A-Z][\w\$]*$', class_name):
+                imported_classes.add(f"{package}.{class_name}")
+
+    # Handle single-class syntax: java.util.Date
+    # Match fully-qualified class names (package.Class)
+    # Must have at least one dot and end with uppercase letter (class name)
+    for match in re.finditer(r'\b([a-z][\w]*(?:\.[a-z][\w]*)+\.[A-Z][\w\$]*)\b', import_body):
+        class_name = match.group(1)
+        # Avoid matching things inside vector forms (already handled above)
+        imported_classes.add(class_name)
+
+    return imported_classes
+
+
+def class_to_path(class_name: str) -> str:
+    """Convert a Java class name to its expected file path.
+
+    Examples:
+        "com.example.Foo" -> "com/example/Foo.java"
+        "java.util.HashMap" -> "java/util/HashMap.java"
+        "java.util.Map$Entry" -> "java/util/Map.java" (inner class)
+
+    Note: Inner classes (containing $) are mapped to their outer class file.
+    """
+    # Handle inner classes by taking only the outer class
+    if '$' in class_name:
+        class_name = class_name.split('$')[0]
+
+    path = class_name.replace('.', '/')
+    return f"{path}.java"
+
+
+def is_jdk_class(class_name: str) -> bool:
+    """Check if a class is part of the JDK (implicit dependency).
+
+    JDK packages include:
+    - java.* (java.lang, java.util, java.io, etc.)
+    - javax.* (javax.swing, javax.sql, etc.)
+    - sun.* (internal, discouraged but sometimes used)
+    - jdk.* (JDK 9+ modules)
+    """
+    jdk_prefixes = ("java.", "javax.", "sun.", "jdk.")
+    return any(class_name.startswith(prefix) for prefix in jdk_prefixes)
+
+
 def namespace_to_path(namespace: str) -> str:
     """Convert a Clojure namespace to its expected file path.
 
