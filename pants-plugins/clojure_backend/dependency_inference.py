@@ -24,6 +24,7 @@ from pants.engine.target import (
     Targets,
 )
 from pants.engine.unions import UnionRule
+from pants.jvm.dependency_inference.symbol_mapper import SymbolMapping
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmResolveField
 from pants.util.frozendict import FrozenDict
@@ -267,8 +268,9 @@ class ClojureMapping:
 async def infer_clojure_source_dependencies(
     request: InferClojureSourceDependencies,
     jvm: JvmSubsystem,
+    symbol_mapping: SymbolMapping,
 ) -> InferredDependencies:
-    """Infer dependencies for a Clojure source file by analyzing its :require forms."""
+    """Infer dependencies for a Clojure source file by analyzing its :require and :import forms."""
 
     # Get explicitly provided dependencies for disambiguation and source file
     explicitly_provided_deps, source_files = await MultiGet(
@@ -283,14 +285,13 @@ async def infer_clojure_source_dependencies(
 
     source_content = digest_contents[0].content.decode('utf-8')
 
-    # Parse required namespaces
+    # Parse required Clojure namespaces and imported Java classes
     required_namespaces = parse_clojure_requires(source_content)
-
-    if not required_namespaces:
-        return InferredDependencies([])
+    imported_classes = parse_clojure_imports(source_content)
 
     # Convert namespaces to potential file paths and find owners
     dependencies: OrderedSet[Address] = OrderedSet()
+    my_resolve = request.field_set.resolve.normalized_value(jvm)
 
     for namespace in required_namespaces:
         # Convert namespace to expected file path
@@ -336,6 +337,28 @@ async def infer_clojure_source_dependencies(
                 if maybe_disambiguated:
                     dependencies.add(maybe_disambiguated)
                 break  # Found owners, no need to try other paths
+
+    # Handle Java class imports using SymbolMapping
+    for class_name in imported_classes:
+        # Skip JDK classes (implicit in classpath)
+        if is_jdk_class(class_name):
+            continue
+
+        # Query symbol mapping for this class
+        # This handles both first-party Java sources and third-party artifacts
+        symbol_matches = symbol_mapping.addresses_for_symbol(class_name, my_resolve)
+
+        # Flatten matches from all namespaces and add to dependencies
+        for matches in symbol_matches.values():
+            explicitly_provided_deps.maybe_warn_of_ambiguous_dependency_inference(
+                matches,
+                request.field_set.address,
+                import_reference="class",
+                context=f"The target {request.field_set.address} imports `{class_name}`",
+            )
+            maybe_disambiguated = explicitly_provided_deps.disambiguated(matches)
+            if maybe_disambiguated:
+                dependencies.add(maybe_disambiguated)
 
     return InferredDependencies(sorted(dependencies))
 
@@ -344,8 +367,9 @@ async def infer_clojure_source_dependencies(
 async def infer_clojure_test_dependencies(
     request: InferClojureTestDependencies,
     jvm: JvmSubsystem,
+    symbol_mapping: SymbolMapping,
 ) -> InferredDependencies:
-    """Infer dependencies for a Clojure test file by analyzing its :require forms."""
+    """Infer dependencies for a Clojure test file by analyzing its :require and :import forms."""
 
     # Get explicitly provided dependencies for disambiguation and source file
     explicitly_provided_deps, source_files = await MultiGet(
@@ -360,14 +384,13 @@ async def infer_clojure_test_dependencies(
 
     source_content = digest_contents[0].content.decode('utf-8')
 
-    # Parse required namespaces
+    # Parse required Clojure namespaces and imported Java classes
     required_namespaces = parse_clojure_requires(source_content)
-
-    if not required_namespaces:
-        return InferredDependencies([])
+    imported_classes = parse_clojure_imports(source_content)
 
     # Convert namespaces to potential file paths and find owners
     dependencies: OrderedSet[Address] = OrderedSet()
+    my_resolve = request.field_set.resolve.normalized_value(jvm)
 
     for namespace in required_namespaces:
         # Convert namespace to expected file path
@@ -387,8 +410,6 @@ async def infer_clojure_test_dependencies(
             if owners:
                 # Filter owners to only those with matching resolve
                 # This handles cases where the same file has multiple targets with different resolves
-                my_resolve = request.field_set.resolve.normalized_value(jvm)
-
                 # Group owners by whether they match our resolve
                 # We need to check the target's resolve field, but we can infer it from the address
                 # For generated targets like "core.clj:../../java17", the resolve is in the generator
@@ -413,6 +434,28 @@ async def infer_clojure_test_dependencies(
                 if maybe_disambiguated:
                     dependencies.add(maybe_disambiguated)
                 break  # Found owners, no need to try other paths
+
+    # Handle Java class imports using SymbolMapping
+    for class_name in imported_classes:
+        # Skip JDK classes (implicit in classpath)
+        if is_jdk_class(class_name):
+            continue
+
+        # Query symbol mapping for this class
+        # This handles both first-party Java sources and third-party artifacts
+        symbol_matches = symbol_mapping.addresses_for_symbol(class_name, my_resolve)
+
+        # Flatten matches from all namespaces and add to dependencies
+        for matches in symbol_matches.values():
+            explicitly_provided_deps.maybe_warn_of_ambiguous_dependency_inference(
+                matches,
+                request.field_set.address,
+                import_reference="class",
+                context=f"The target {request.field_set.address} imports `{class_name}`",
+            )
+            maybe_disambiguated = explicitly_provided_deps.disambiguated(matches)
+            if maybe_disambiguated:
+                dependencies.add(maybe_disambiguated)
 
     return InferredDependencies(sorted(dependencies))
 
