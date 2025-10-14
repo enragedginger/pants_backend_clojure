@@ -1,5 +1,5 @@
 (ns example.project-c.core
-  (:require [example.project-a.core :as project-a]))
+  (:use [example.project-a.core]))
 
 (defn transform-project-a []
-  (clojure.string/upper-case project-a/thing))
+  (clojure.string/upper-case thing))

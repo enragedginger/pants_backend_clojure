@@ -56,12 +56,15 @@ def parse_clojure_namespace(source_content: str) -> str | None:
 def parse_clojure_requires(source_content: str) -> set[str]:
     """Extract required namespaces from a Clojure source file.
 
-    Example:
+    Handles both :require and :use forms.
+
+    Examples:
         (ns example.foo
           (:require [example.bar :as bar]
-                    [example.baz]))
+                    [example.baz])
+          (:use [example.qux]))
 
-        Returns: {"example.bar", "example.baz"}
+        Returns: {"example.bar", "example.baz", "example.qux"}
     """
     required_namespaces = set()
 
@@ -72,20 +75,21 @@ def parse_clojure_requires(source_content: str) -> set[str]:
 
     ns_body = ns_match.group(1)
 
-    # Find :require section - look for (:require ...)
-    require_match = re.search(r'\(:require\s+(.*?)(?=\(:|$)', ns_body, re.DOTALL)
-    if not require_match:
-        return required_namespaces
+    # Find :require and :use sections - look for (:require ...) and (:use ...)
+    for directive in [':require', ':use']:
+        directive_match = re.search(rf'\({directive}\s+(.*?)(?=\(:|$)', ns_body, re.DOTALL)
+        if not directive_match:
+            continue
 
-    require_body = require_match.group(1)
+        directive_body = directive_match.group(1)
 
-    # Extract namespaces - they appear at the start of [namespace ...] forms
-    # Match patterns like [example.foo ...] or [example.bar]
-    for match in re.finditer(r'\[([a-zA-Z][\w\.\-]*)', require_body):
-        namespace = match.group(1)
-        # Only include if it looks like a namespace (has a dot)
-        if '.' in namespace:
-            required_namespaces.add(namespace)
+        # Extract namespaces - they appear at the start of [namespace ...] forms
+        # Match patterns like [example.foo ...] or [example.bar]
+        for match in re.finditer(r'\[([a-zA-Z][\w\.\-]*)', directive_body):
+            namespace = match.group(1)
+            # Only include if it looks like a namespace (has a dot)
+            if '.' in namespace:
+                required_namespaces.add(namespace)
 
     return required_namespaces
 
