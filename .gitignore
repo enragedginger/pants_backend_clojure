@@ -1,2 +1,5 @@
 .pants.d/
 *.pyc
+*.iml
+/.idea
+/.cache
