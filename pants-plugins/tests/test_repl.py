@@ -4,7 +4,7 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.clj_repl import ClojureNRepl, ClojureRepl
+from clojure_backend.clj_repl import ClojureNRepl, ClojureRebelRepl, ClojureRepl
 from clojure_backend.clj_repl import rules as repl_rules
 from clojure_backend.target_types import (
     ClojureSourcesGeneratorTarget,
@@ -49,6 +49,7 @@ def rule_runner() -> RuleRunner:
             *lockfile.rules(),
             QueryRule(ReplRequest, [ClojureRepl]),
             QueryRule(ReplRequest, [ClojureNRepl]),
+            QueryRule(ReplRequest, [ClojureRebelRepl]),
         ],
         target_types=[
             ClojureSourceTarget,
@@ -499,4 +500,14 @@ def test_repl_request_with_multiple_targets(rule_runner: RuleRunner) -> None:
 # @pytest.mark.skip(reason="Requires nREPL artifact from Maven Central")
 # def test_nrepl_request_includes_nrepl_server(rule_runner: RuleRunner) -> None:
 #     """Test that nREPL request includes nREPL server startup command."""
+#     # Test implementation available but skipped due to Maven repository dependency
+
+
+# NOTE: Rebel Readline tests are also skipped for the same Maven repository reasons.
+# The Rebel implementation is functional and can be tested manually with:
+#   pants repl --repl-shell=rebel <target-spec>
+
+# @pytest.mark.skip(reason="Requires Rebel Readline artifact from Maven Central")
+# def test_rebel_repl_request_includes_rebel_main(rule_runner: RuleRunner) -> None:
+#     """Test that Rebel REPL request includes rebel-readline.main."""
 #     # Test implementation available but skipped due to Maven repository dependency

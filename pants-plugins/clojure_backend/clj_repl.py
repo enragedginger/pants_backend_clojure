@@ -43,6 +43,19 @@ class NReplSubsystem(Subsystem):
     )
 
 
+class RebelSubsystem(Subsystem):
+    """Configuration for Rebel Readline REPL."""
+
+    options_scope = "rebel-repl"
+    name = "Rebel Readline"
+    help = "Rebel Readline REPL configuration for enhanced Clojure REPL experience."
+
+    version = StrOption(
+        default="0.1.4",
+        help="Rebel Readline version to use.",
+    )
+
+
 class ClojureRepl(ReplImplementation):
     """Standard clojure.main REPL."""
 
@@ -201,9 +214,97 @@ async def create_nrepl_request(
     )
 
 
+class ClojureRebelRepl(ReplImplementation):
+    """Rebel Readline enhanced REPL."""
+
+    name = "rebel"
+    supports_args = True
+
+
+@rule(desc="Create Rebel Readline REPL", level=LogLevel.DEBUG)
+async def create_rebel_repl_request(
+    repl: ClojureRebelRepl, bash: BashBinary, rebel_subsystem: RebelSubsystem
+) -> ReplRequest:
+    """Create ReplRequest for Rebel Readline REPL."""
+
+    # Get classpath and transitive targets
+    classpath, transitive_targets = await MultiGet(
+        classpath_get(**implicitly({repl.addresses: Addresses})),
+        Get(TransitiveTargets, TransitiveTargetsRequest(repl.addresses)),
+    )
+
+    # Extract JDK version from first target that has it, or use default
+    jdk_request = JdkRequest.SOURCE_DEFAULT
+    for tgt in transitive_targets.roots:
+        if tgt.has_field(JvmJdkField):
+            jdk_request = JdkRequest.from_field(tgt[JvmJdkField])
+            break
+
+    # Get Rebel Readline artifact requirement
+    rebel_artifact = ArtifactRequirement(
+        coordinate=Coordinate(
+            group="com.bhauman",
+            artifact="rebel-readline",
+            version=rebel_subsystem.version,
+        )
+    )
+
+    # Get JDK environment, source files, and Rebel classpath in parallel
+    jdk, source_files, rebel_classpath = await MultiGet(
+        Get(JdkEnvironment, JdkRequest, jdk_request),
+        Get(
+            SourceFiles,
+            SourceFilesRequest(
+                (tgt.get(SourcesField) for tgt in transitive_targets.closure),
+                for_sources_types=(ClojureSourceField, ClojureTestSourceField),
+                enable_codegen=False,
+            ),
+        ),
+        Get(
+            ToolClasspath,
+            ToolClasspathRequest(
+                artifact_requirements=ArtifactRequirements([rebel_artifact]),
+            ),
+        ),
+    )
+
+    # Merge all digests: project classpath, source files, and Rebel classpath
+    input_digest = await Get(
+        Digest,
+        MergeDigests([
+            *classpath.digests(),
+            source_files.snapshot.digest,
+            rebel_classpath.digest,
+        ]),
+    )
+
+    # Build Rebel Readline REPL startup command
+    classpath_entries = [
+        ".",
+        *classpath.args(),
+        *rebel_classpath.classpath_entries(),
+    ]
+
+    # Rebel Readline uses its own main class
+    argv = [
+        *jdk.args(bash, classpath_entries),
+        "rebel-readline.main",
+    ]
+
+    return ReplRequest(
+        digest=input_digest,
+        args=argv,
+        extra_env=jdk.env,
+        immutable_input_digests=jdk.immutable_input_digests,
+        append_only_caches=jdk.append_only_caches,
+        run_in_workspace=True,
+    )
+
+
 def rules():
     return [
         *collect_rules(),
         UnionRule(ReplImplementation, ClojureRepl),
         UnionRule(ReplImplementation, ClojureNRepl),
+        UnionRule(ReplImplementation, ClojureRebelRepl),
     ]
