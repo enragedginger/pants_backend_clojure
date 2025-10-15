@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from clojure_backend.target_types import ClojureSourceField, ClojureTestSourceField
 from pants.core.goals.repl import ReplImplementation, ReplRequest
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
@@ -18,6 +20,55 @@ from pants.jvm.target_types import JvmJdkField
 from pants.option.option_types import IntOption, StrOption
 from pants.option.subsystem import Subsystem
 from pants.util.logging import LogLevel
+
+
+def _prepare_repl_for_workspace(
+    argv: Iterable[str], env: dict[str, str], jdk: JdkEnvironment
+) -> tuple[tuple[str, ...], dict[str, str]]:
+    """Prepare argv and env for run_in_workspace=True by prefixing paths with {chroot}/.
+
+    When run_in_workspace=True, the REPL runs in the user's workspace directory,
+    but JDK files are materialized via immutable_input_digests in a sandbox.
+    Prefixing JDK and coursier paths with {chroot}/ tells the engine to substitute
+    the sandbox path.
+
+    This follows the pattern from pants.jvm.run._post_process_jvm_process.
+    """
+    def prefixed(arg: str, prefixes: Iterable[str]) -> str:
+        # Check if any component of a colon-separated path starts with a prefix
+        # (e.g., classpath entries in -cp argument)
+        if ":" in arg:
+            parts = arg.split(":")
+            prefixed_parts = []
+            for part in parts:
+                # "." refers to workspace directory, don't prefix it
+                if part == ".":
+                    prefixed_parts.append(part)
+                # Prefix JDK/coursier paths and JAR files from digest
+                elif any(part.startswith(prefix) for prefix in prefixes) or part.endswith(".jar"):
+                    prefixed_parts.append(f"{{chroot}}/{part}")
+                else:
+                    prefixed_parts.append(part)
+            return ":".join(prefixed_parts)
+        elif any(arg.startswith(prefix) for prefix in prefixes):
+            return f"{{chroot}}/{arg}"
+        else:
+            return arg
+
+    # Prefix JDK paths in argv
+    jdk_prefixes = (jdk.bin_dir, jdk.jdk_preparation_script, jdk.java_home)
+    prefixed_argv = tuple(prefixed(arg, jdk_prefixes) for arg in argv)
+
+    # Prefix coursier cache paths in environment variables
+    prefixed_env = {
+        **env,
+        "PANTS_INTERNAL_ABSOLUTE_PREFIX": "{chroot}/",
+    }
+    for key in list(prefixed_env.keys()):
+        if key.startswith("COURSIER"):
+            prefixed_env[key] = prefixed(prefixed_env[key], (jdk.coursier.cache_dir,))
+
+    return prefixed_argv, prefixed_env
 
 
 class NReplSubsystem(Subsystem):
@@ -80,26 +131,18 @@ async def create_clojure_repl_request(repl: ClojureRepl, bash: BashBinary) -> Re
             jdk_request = JdkRequest.from_field(tgt[JvmJdkField])
             break
 
-    # Get JDK environment and source files in parallel
-    jdk, source_files = await MultiGet(
-        Get(JdkEnvironment, JdkRequest, jdk_request),
-        Get(
-            SourceFiles,
-            SourceFilesRequest(
-                (tgt.get(SourcesField) for tgt in transitive_targets.closure),
-                for_sources_types=(ClojureSourceField, ClojureTestSourceField),
-                enable_codegen=False,
-            ),
-        ),
-    )
+    # Get JDK environment
+    jdk = await Get(JdkEnvironment, JdkRequest, jdk_request)
 
-    # Merge classpath JARs with all source files
+    # For run_in_workspace=True, don't include source files in digest - they'll be
+    # loaded from the workspace. Only include classpath JARs.
     input_digest = await Get(
         Digest,
-        MergeDigests([*classpath.digests(), source_files.snapshot.digest]),
+        MergeDigests(classpath.digests()),
     )
 
     # Build command for clojure.main REPL
+    # "." in classpath refers to workspace directory when run_in_workspace=True
     classpath_entries = [".", *classpath.args()]
     argv = [
         *jdk.args(bash, classpath_entries),
@@ -107,12 +150,17 @@ async def create_clojure_repl_request(repl: ClojureRepl, bash: BashBinary) -> Re
         "--repl",
     ]
 
+    # Prepare for run_in_workspace=True by prefixing JDK/coursier paths with {chroot}/
+    argv, extra_env = _prepare_repl_for_workspace(argv, jdk.env, jdk)
+
     return ReplRequest(
         digest=input_digest,
         args=argv,
-        extra_env=jdk.env,
+        extra_env=extra_env,
         immutable_input_digests=jdk.immutable_input_digests,
         append_only_caches=jdk.append_only_caches,
+        # run_in_workspace=True allows the REPL to see live file changes in the workspace.
+        # Source files are loaded from workspace via "." in classpath.
         run_in_workspace=True,
     )
 
@@ -152,17 +200,9 @@ async def create_nrepl_request(
         )
     )
 
-    # Get JDK environment, source files, and nREPL classpath in parallel
-    jdk, source_files, nrepl_classpath = await MultiGet(
+    # Get JDK environment and nREPL classpath in parallel
+    jdk, nrepl_classpath = await MultiGet(
         Get(JdkEnvironment, JdkRequest, jdk_request),
-        Get(
-            SourceFiles,
-            SourceFilesRequest(
-                (tgt.get(SourcesField) for tgt in transitive_targets.closure),
-                for_sources_types=(ClojureSourceField, ClojureTestSourceField),
-                enable_codegen=False,
-            ),
-        ),
         Get(
             ToolClasspath,
             ToolClasspathRequest(
@@ -171,12 +211,12 @@ async def create_nrepl_request(
         ),
     )
 
-    # Merge all digests: project classpath, source files, and nREPL classpath
+    # For run_in_workspace=True, don't include source files in digest - they'll be
+    # loaded from the workspace. Only include classpath JARs and nREPL.
     input_digest = await Get(
         Digest,
         MergeDigests([
             *classpath.digests(),
-            source_files.snapshot.digest,
             nrepl_classpath.digest,
         ]),
     )
@@ -185,6 +225,7 @@ async def create_nrepl_request(
     port = nrepl_subsystem.port
     host = nrepl_subsystem.host
 
+    # "." in classpath refers to workspace directory when run_in_workspace=True
     classpath_entries = [
         ".",
         *classpath.args(),
@@ -204,12 +245,17 @@ async def create_nrepl_request(
         nrepl_start_code,
     ]
 
+    # Prepare for run_in_workspace=True by prefixing JDK/coursier paths with {chroot}/
+    argv, extra_env = _prepare_repl_for_workspace(argv, jdk.env, jdk)
+
     return ReplRequest(
         digest=input_digest,
         args=argv,
-        extra_env=jdk.env,
+        extra_env=extra_env,
         immutable_input_digests=jdk.immutable_input_digests,
         append_only_caches=jdk.append_only_caches,
+        # run_in_workspace=True allows the REPL to see live file changes in the workspace.
+        # Source files are loaded from workspace via "." in classpath.
         run_in_workspace=True,
     )
 
@@ -249,17 +295,9 @@ async def create_rebel_repl_request(
         )
     )
 
-    # Get JDK environment, source files, and Rebel classpath in parallel
-    jdk, source_files, rebel_classpath = await MultiGet(
+    # Get JDK environment and Rebel classpath in parallel
+    jdk, rebel_classpath = await MultiGet(
         Get(JdkEnvironment, JdkRequest, jdk_request),
-        Get(
-            SourceFiles,
-            SourceFilesRequest(
-                (tgt.get(SourcesField) for tgt in transitive_targets.closure),
-                for_sources_types=(ClojureSourceField, ClojureTestSourceField),
-                enable_codegen=False,
-            ),
-        ),
         Get(
             ToolClasspath,
             ToolClasspathRequest(
@@ -268,17 +306,18 @@ async def create_rebel_repl_request(
         ),
     )
 
-    # Merge all digests: project classpath, source files, and Rebel classpath
+    # For run_in_workspace=True, don't include source files in digest - they'll be
+    # loaded from the workspace. Only include classpath JARs and Rebel Readline.
     input_digest = await Get(
         Digest,
         MergeDigests([
             *classpath.digests(),
-            source_files.snapshot.digest,
             rebel_classpath.digest,
         ]),
     )
 
     # Build Rebel Readline REPL startup command
+    # "." in classpath refers to workspace directory when run_in_workspace=True
     classpath_entries = [
         ".",
         *classpath.args(),
@@ -291,12 +330,17 @@ async def create_rebel_repl_request(
         "rebel-readline.main",
     ]
 
+    # Prepare for run_in_workspace=True by prefixing JDK/coursier paths with {chroot}/
+    argv, extra_env = _prepare_repl_for_workspace(argv, jdk.env, jdk)
+
     return ReplRequest(
         digest=input_digest,
         args=argv,
-        extra_env=jdk.env,
+        extra_env=extra_env,
         immutable_input_digests=jdk.immutable_input_digests,
         append_only_caches=jdk.append_only_caches,
+        # run_in_workspace=True allows the REPL to see live file changes in the workspace.
+        # Source files are loaded from workspace via "." in classpath.
         run_in_workspace=True,
     )
 
