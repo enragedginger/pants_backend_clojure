@@ -26,9 +26,9 @@ pants-plugins = "locks/python/pants-plugins.lock.jsonc"
 
 [coursier]
 repos = [
+  "https://repo.clojars.org/",
   "https://maven-central.storage-download.googleapis.com/maven2",
   "https://repo1.maven.org/maven2",
-  "https://repo.clojars.org/",
 ]
 
 [jvm.resolves]
