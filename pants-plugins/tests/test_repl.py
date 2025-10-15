@@ -492,6 +492,239 @@ def test_repl_request_with_multiple_targets(rule_runner: RuleRunner) -> None:
     assert request.digest != None
 
 
+def test_repl_uses_workspace_for_live_reloading(rule_runner: RuleRunner) -> None:
+    """Test that REPL uses run_in_workspace=True to support live file reloading.
+
+    This is critical for Clojure REPL-driven development where you edit files
+    and reload namespaces to see changes immediately.
+    """
+    rule_runner.write_files(
+        {
+            "3rdparty/jvm/BUILD": dedent(
+                """\
+                jvm_artifact(
+                    name="org.clojure_clojure",
+                    group="org.clojure",
+                    artifact="clojure",
+                    version="1.12.0",
+                )
+                """
+            ),
+            "3rdparty/jvm/default.lock": _CLOJURE_LOCKFILE,
+            "BUILD": dedent(
+                """\
+                clojure_sources(
+                    name='lib',
+                    dependencies=[
+                        '3rdparty/jvm:org.clojure_clojure',
+                    ],
+                )
+                """
+            ),
+            "example.clj": dedent(
+                """\
+                (ns example)
+
+                (defn greet [name]
+                  (str "Hello, " name "!"))
+                """
+            ),
+        }
+    )
+
+    args = [
+        f"--jvm-resolves={repr(_JVM_RESOLVES)}",
+        "--jvm-default-resolve=jvm-default",
+    ]
+    rule_runner.set_options(args, env_inherit=PYTHON_BOOTSTRAP_ENV)
+
+    tgt = rule_runner.get_target(
+        Address(spec_path="", target_name="lib", relative_file_path="example.clj")
+    )
+
+    repl = ClojureRepl(targets=(tgt,))
+    request = rule_runner.request(ReplRequest, [repl])
+
+    # Critical: run_in_workspace must be True for live reloading
+    assert request.run_in_workspace is True, \
+        "REPL must run in workspace to see live file changes during development"
+
+
+def test_repl_argv_includes_jdk_paths(rule_runner: RuleRunner) -> None:
+    """Test that REPL argv properly handles JDK paths with chroot prefixing.
+
+    This ensures the JDK preparation script can be found when running in workspace.
+    """
+    rule_runner.write_files(
+        {
+            "3rdparty/jvm/BUILD": dedent(
+                """\
+                jvm_artifact(
+                    name="org.clojure_clojure",
+                    group="org.clojure",
+                    artifact="clojure",
+                    version="1.12.0",
+                )
+                """
+            ),
+            "3rdparty/jvm/default.lock": _CLOJURE_LOCKFILE,
+            "BUILD": dedent(
+                """\
+                clojure_sources(
+                    name='lib',
+                    dependencies=[
+                        '3rdparty/jvm:org.clojure_clojure',
+                    ],
+                )
+                """
+            ),
+            "example.clj": dedent(
+                """\
+                (ns example)
+
+                (defn identity-fn [x] x)
+                """
+            ),
+        }
+    )
+
+    args = [
+        f"--jvm-resolves={repr(_JVM_RESOLVES)}",
+        "--jvm-default-resolve=jvm-default",
+    ]
+    rule_runner.set_options(args, env_inherit=PYTHON_BOOTSTRAP_ENV)
+
+    tgt = rule_runner.get_target(
+        Address(spec_path="", target_name="lib", relative_file_path="example.clj")
+    )
+
+    repl = ClojureRepl(targets=(tgt,))
+    request = rule_runner.request(ReplRequest, [repl])
+
+    # Verify JDK paths are properly handled
+    argv_str = " ".join(request.args)
+
+    # Should contain {chroot} prefix for JDK paths when run_in_workspace=True
+    assert "{chroot}" in argv_str, \
+        "JDK paths must use {chroot} prefix for run_in_workspace=True"
+
+    # Should still reference bash and clojure.main
+    assert any("bash" in arg for arg in request.args)
+    assert "clojure.main" in request.args
+
+
+def test_repl_environment_includes_chroot_prefix(rule_runner: RuleRunner) -> None:
+    """Test that REPL environment properly configures PANTS_INTERNAL_ABSOLUTE_PREFIX.
+
+    This is required for the JDK preparation script to create correct symlinks.
+    """
+    rule_runner.write_files(
+        {
+            "3rdparty/jvm/BUILD": dedent(
+                """\
+                jvm_artifact(
+                    name="org.clojure_clojure",
+                    group="org.clojure",
+                    artifact="clojure",
+                    version="1.12.0",
+                )
+                """
+            ),
+            "3rdparty/jvm/default.lock": _CLOJURE_LOCKFILE,
+            "BUILD": dedent(
+                """\
+                clojure_sources(
+                    name='lib',
+                    dependencies=[
+                        '3rdparty/jvm:org.clojure_clojure',
+                    ],
+                )
+                """
+            ),
+            "example.clj": "(ns example)",
+        }
+    )
+
+    args = [
+        f"--jvm-resolves={repr(_JVM_RESOLVES)}",
+        "--jvm-default-resolve=jvm-default",
+    ]
+    rule_runner.set_options(args, env_inherit=PYTHON_BOOTSTRAP_ENV)
+
+    tgt = rule_runner.get_target(
+        Address(spec_path="", target_name="lib", relative_file_path="example.clj")
+    )
+
+    repl = ClojureRepl(targets=(tgt,))
+    request = rule_runner.request(ReplRequest, [repl])
+
+    # Verify environment setup
+    assert request.extra_env is not None
+    assert "PANTS_INTERNAL_ABSOLUTE_PREFIX" in request.extra_env
+    assert request.extra_env["PANTS_INTERNAL_ABSOLUTE_PREFIX"] == "{chroot}/"
+
+
+def test_repl_classpath_includes_workspace_directory(rule_runner: RuleRunner) -> None:
+    """Test that REPL classpath includes '.' for loading source files from workspace.
+
+    This allows the REPL to load and reload source files from the workspace directory.
+    """
+    rule_runner.write_files(
+        {
+            "3rdparty/jvm/BUILD": dedent(
+                """\
+                jvm_artifact(
+                    name="org.clojure_clojure",
+                    group="org.clojure",
+                    artifact="clojure",
+                    version="1.12.0",
+                )
+                """
+            ),
+            "3rdparty/jvm/default.lock": _CLOJURE_LOCKFILE,
+            "BUILD": dedent(
+                """\
+                clojure_sources(
+                    name='lib',
+                    dependencies=[
+                        '3rdparty/jvm:org.clojure_clojure',
+                    ],
+                )
+                """
+            ),
+            "example.clj": "(ns example)",
+        }
+    )
+
+    args = [
+        f"--jvm-resolves={repr(_JVM_RESOLVES)}",
+        "--jvm-default-resolve=jvm-default",
+    ]
+    rule_runner.set_options(args, env_inherit=PYTHON_BOOTSTRAP_ENV)
+
+    tgt = rule_runner.get_target(
+        Address(spec_path="", target_name="lib", relative_file_path="example.clj")
+    )
+
+    repl = ClojureRepl(targets=(tgt,))
+    request = rule_runner.request(ReplRequest, [repl])
+
+    # Find the -cp argument and verify it contains "."
+    argv = request.args
+    for i, arg in enumerate(argv):
+        if arg == "-cp" and i + 1 < len(argv):
+            classpath = argv[i + 1]
+            # "." should be in the classpath, and should NOT be prefixed with {chroot}
+            assert "." in classpath.split(":"), \
+                "Classpath must include '.' for loading files from workspace"
+            # Verify "." is standalone, not prefixed
+            assert any(part == "." for part in classpath.split(":")), \
+                "'.' should not be prefixed with {chroot}/"
+            break
+    else:
+        pytest.fail("-cp argument not found in argv")
+
+
 # NOTE: nREPL tests are skipped because they require fetching the nREPL artifact
 # from Maven repositories, which may not be accessible in the test environment.
 # The nREPL implementation is functional and can be tested manually with:
