@@ -24,6 +24,13 @@ interpreter_constraints = ["==3.11.*"]
 [python.resolves]
 pants-plugins = "locks/python/pants-plugins.lock.jsonc"
 
+[coursier]
+repos = [
+  "https://maven-central.storage-download.googleapis.com/maven2",
+  "https://repo1.maven.org/maven2",
+  "https://repo.clojars.org/",
+]
+
 [jvm.resolves]
 java17 = "locks/jvm/java17.lock.jsonc"
 java21 = "locks/jvm/java21.lock.jsonc"
