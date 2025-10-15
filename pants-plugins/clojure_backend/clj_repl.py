@@ -232,10 +232,14 @@ async def create_nrepl_request(
         *nrepl_classpath.classpath_entries(),
     ]
 
-    # Command to start nREPL server
+    # Command to start nREPL server and keep it running
+    # The server is stored in an atom and we use deref (@) to block indefinitely
     nrepl_start_code = (
         f'(require (quote nrepl.server)) '
-        f'(nrepl.server/start-server :bind "{host}" :port {port})'
+        f'(let [server (nrepl.server/start-server :bind "{host}" :port {port})] '
+        f'(println server) '
+        f'(println "nREPL server started on port {port}") '
+        f'@(promise))'  # Block forever
     )
 
     argv = [
