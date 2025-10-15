@@ -40,8 +40,31 @@ class GenerateDepsEdnSubsystem(GoalSubsystem):
     help = """Generate a deps.edn file from Pants dependency information for a specific resolve.
 
 This allows traditional Clojure tooling (IDEs like Cursive and Calva) to work with
-Pants-managed projects. The generated deps.edn includes all sources and dependencies
-for the specified resolve.
+Pants-managed projects. The generated deps.edn includes all Clojure sources and
+third-party dependencies for the specified resolve.
+
+## What's Included
+
+- **Clojure sources**: All clojure_source and clojure_test targets in the resolve
+- **Third-party dependencies**: All JVM dependencies from the lock file
+- **Aliases**: Pre-configured :test, :nrepl, and :rebel aliases
+
+## What's NOT Included (By Design)
+
+**Java and Scala sources are intentionally excluded** from the generated deps.edn.
+
+Rationale:
+- deps.edn is designed for Clojure source files, which can be loaded directly
+- Java/Scala sources must be compiled to .class files before use
+- Pants compiles Java/Scala automatically when building classpaths
+- For mixed JVM codebases, use `pants repl` which handles compilation correctly
+- Most Clojure IDEs don't provide compile-on-save for Java/Scala anyway
+
+If you need Java/Scala interop in your REPL:
+- Use `pants repl` instead of `clj` - it includes compiled Java/Scala on the classpath
+- Or manually compile Java/Scala and add the JARs to deps.edn :extra-paths
+
+See docs/plans/20251015_repl_redesign.md for more details.
 """
 
     resolve = StrOption(
@@ -168,7 +191,20 @@ class ClojureSourcesInfo:
 async def gather_clojure_sources_for_resolve(
     all_targets: AllTargets, jvm: JvmSubsystem, resolve_name: str
 ) -> ClojureSourcesInfo:
-    """Gather all Clojure source and test paths for a specific resolve."""
+    """Gather all Clojure source and test paths for a specific resolve.
+
+    Note: This function intentionally only includes Clojure sources, not Java or Scala.
+
+    Design Decision: Java and Scala sources are excluded because:
+    1. They must be compiled to .class files before use (unlike Clojure source files)
+    2. deps.edn's :paths is designed for source files that can be loaded directly
+    3. Pants automatically compiles Java/Scala when building classpaths
+    4. For mixed JVM codebases, `pants repl` is the recommended workflow
+
+    If users need compiled Java/Scala classes:
+    - Use `pants repl` which includes compiled Java/Scala JARs in the classpath
+    - Or manually add compiled JARs to deps.edn :extra-paths alias
+    """
 
     source_targets = []
     test_targets = []
@@ -183,6 +219,7 @@ async def gather_clojure_sources_for_resolve(
             continue
 
         # Categorize by target type
+        # NOTE: Only collecting Clojure targets here - Java/Scala targets are intentionally skipped
         if isinstance(target, ClojureSourceTarget) and target.has_field(ClojureSourceField):
             source_targets.append(target)
         elif isinstance(target, ClojureTestTarget) and target.has_field(ClojureTestSourceField):

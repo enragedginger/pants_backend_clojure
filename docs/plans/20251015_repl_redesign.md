@@ -472,12 +472,45 @@ deps.edn generation solves both problems:
 - IDE users use standard Clojure tooling
 - Command-line users can still use `pants repl` or `clj` with generated deps.edn
 
+## Design Decisions
+
+### Java and Scala Sources Are Intentionally Excluded
+
+**Decision**: The `generate-deps-edn` goal only includes Clojure sources in the generated `:paths`, not Java or Scala sources.
+
+**Rationale**:
+
+1. **deps.edn is for source files**: The `:paths` vector in deps.edn is designed for source files that can be loaded directly by the Clojure runtime (e.g., `.clj`, `.cljc` files). Java and Scala sources must be compiled to `.class` files before use.
+
+2. **Compilation complexity**:
+   - Pants compiles Java/Scala implicitly when building classpaths via `classpath.args()`
+   - The compiled `.class` files are stored in internal Pants caches, not user-accessible directories
+   - There's no explicit "compile" goal users can run to get a stable output directory
+
+3. **IDE limitations**: Most Clojure IDEs (Cursive, Calva) don't provide compile-on-save support for Java/Scala sources anyway. Developers working with mixed codebases typically rely on build tools for compilation.
+
+4. **Separation of concerns**:
+   - `generate-deps-edn` is optimized for **Clojure-centric IDE workflows**
+   - `pants repl` remains the canonical tool for **mixed JVM codebases**
+
+**For users who need Java/Scala interop**:
+
+- **Recommended**: Use `pants repl` which automatically compiles Java/Scala and includes the resulting JARs on the classpath
+- **Alternative**: Manually compile Java/Scala sources, package into JARs, and add to deps.edn using `:local/root` or `:extra-paths`
+
+**Future enhancement**: If there's demand, we could add a `--include-jvm-sources=jar` flag that:
+1. Uses Pants' classpath resolution to get compiled Java/Scala JARs
+2. Adds them to deps.edn as `:extra-paths` in an alias like `:jvm-sources`
+3. Requires users to run `clj -A:jvm-sources` to include them
+
+But this adds complexity and isn't needed for the primary use case (Clojure-only development with IDEs).
+
 ## Success Metrics
 
 After implementation, measure success by:
 
 1. **Functional**: Can add dependency to source file and immediately use it in REPL without restart
-2. **IDE Integration**: Cursive/Calva can open project and get full autocomplete/navigation
+2. **IDE Integration**: Cursive/Calva can open project and get full autocomplete/navigation for Clojure code
 3. **Usability**: Developers familiar with Leiningen/deps.edn can transition to Pants smoothly
 4. **Performance**: deps.edn generation completes in <2s for typical project
 
