@@ -19,6 +19,7 @@ from pants.core.goals.repl import ReplRequest
 from pants.core.util_rules import config_files, source_files, stripped_source_files, system_binaries
 from pants.engine.addresses import Address
 from pants.engine.rules import QueryRule
+from pants.engine.target import AllTargets
 from pants.jvm import classpath, jvm_common, non_jvm_dependencies
 from pants.jvm.goals import lockfile
 from pants.jvm.resolve.coursier_fetch import rules as coursier_fetch_rules
@@ -664,10 +665,14 @@ def test_repl_environment_includes_chroot_prefix(rule_runner: RuleRunner) -> Non
     assert request.extra_env["PANTS_INTERNAL_ABSOLUTE_PREFIX"] == "{chroot}/"
 
 
-def test_repl_classpath_includes_workspace_directory(rule_runner: RuleRunner) -> None:
-    """Test that REPL classpath includes '.' for loading source files from workspace.
+def test_repl_classpath_includes_source_roots(rule_runner: RuleRunner) -> None:
+    """Test that REPL classpath includes source roots for namespace resolution.
 
-    This allows the REPL to load and reload source files from the workspace directory.
+    This is critical - Clojure needs the source root directories in the classpath
+    to resolve namespaces. For example, if you have:
+    - File: src/example/core.clj
+    - Namespace: (ns example.core)
+    Then 'src' must be in the classpath, not 'src/example'.
     """
     rule_runner.write_files(
         {
@@ -692,6 +697,7 @@ def test_repl_classpath_includes_workspace_directory(rule_runner: RuleRunner) ->
                 )
                 """
             ),
+            # File at root with simple namespace
             "example.clj": "(ns example)",
         }
     )
@@ -709,17 +715,16 @@ def test_repl_classpath_includes_workspace_directory(rule_runner: RuleRunner) ->
     repl = ClojureRepl(targets=(tgt,))
     request = rule_runner.request(ReplRequest, [repl])
 
-    # Find the -cp argument and verify it contains "."
+    # Find the -cp argument and verify it contains the source root
     argv = request.args
     for i, arg in enumerate(argv):
         if arg == "-cp" and i + 1 < len(argv):
             classpath = argv[i + 1]
-            # "." should be in the classpath, and should NOT be prefixed with {chroot}
-            assert "." in classpath.split(":"), \
-                "Classpath must include '.' for loading files from workspace"
-            # Verify "." is standalone, not prefixed
-            assert any(part == "." for part in classpath.split(":")), \
-                "'.' should not be prefixed with {chroot}/"
+            classpath_entries = classpath.split(":")
+
+            # For a file at the root with namespace 'example', the source root should be "."
+            assert "." in classpath_entries, \
+                f"Classpath must include source root '.'. Got: {classpath_entries}"
             break
     else:
         pytest.fail("-cp argument not found in argv")
@@ -749,8 +754,9 @@ def test_repl_classpath_includes_workspace_directory(rule_runner: RuleRunner) ->
 def test_repl_load_resolve_sources_enabled_by_default(rule_runner: RuleRunner) -> None:
     """Test that --clojure-repl-load-resolve-sources is enabled by default.
 
-    When enabled, the REPL should include all Clojure targets in the same resolve,
-    not just transitive dependencies of the specified target.
+    When enabled, the REPL should include ALL Clojure source roots in the same resolve,
+    not just transitive dependencies. This allows requiring any namespace without
+    explicit BUILD dependencies.
     """
     rule_runner.write_files(
         {
@@ -821,18 +827,33 @@ def test_repl_load_resolve_sources_enabled_by_default(rule_runner: RuleRunner) -
     request = rule_runner.request(ReplRequest, [repl])
 
     # Verify REPL was created successfully
-    # Note: We can't easily verify that project_b is loaded without actually running
-    # the REPL and checking the classpath at runtime. The important thing is that
-    # the rule executes successfully with the load_resolve_sources logic.
     assert "clojure.main" in request.args
     assert request.run_in_workspace is True
+
+    # CRITICAL: Verify that BOTH project_a and project_b source roots are in classpath
+    # This is the key behavior - all sources in the resolve should be available
+    argv = request.args
+    for i, arg in enumerate(argv):
+        if arg == "-cp" and i + 1 < len(argv):
+            classpath = argv[i + 1]
+            classpath_entries = classpath.split(":")
+
+            # Both project directories should be source roots in the classpath
+            assert "project_a" in classpath_entries, \
+                f"project_a source root must be in classpath. Got: {classpath_entries}"
+            assert "project_b" in classpath_entries, \
+                f"project_b source root must be in classpath (load_resolve_sources=True). Got: {classpath_entries}"
+            break
+    else:
+        pytest.fail("-cp argument not found in argv")
 
 
 def test_repl_load_resolve_sources_disabled_hermetic_mode(rule_runner: RuleRunner) -> None:
     """Test that --no-clojure-repl-load-resolve-sources enables hermetic mode.
 
-    When disabled, the REPL should only include transitive dependencies of the
-    specified target, not all targets in the resolve.
+    When disabled, the REPL should only include transitive dependencies from the
+    BUILD file, not all targets in the resolve. This is "hermetic" - strictly
+    respecting the dependency graph.
     """
     rule_runner.write_files(
         {
@@ -904,6 +925,25 @@ def test_repl_load_resolve_sources_disabled_hermetic_mode(rule_runner: RuleRunne
     # Verify REPL was created successfully in hermetic mode
     assert "clojure.main" in request.args
     assert request.run_in_workspace is True
+
+    # CRITICAL: Verify that project_b is NOT in the classpath in hermetic mode
+    # Only project_a should be included since it's the target we're running
+    argv = request.args
+    for i, arg in enumerate(argv):
+        if arg == "-cp" and i + 1 < len(argv):
+            classpath = argv[i + 1]
+            classpath_entries = classpath.split(":")
+
+            # project_a should be in classpath (it's the target we're running)
+            assert "project_a" in classpath_entries, \
+                f"project_a source root must be in classpath. Got: {classpath_entries}"
+
+            # project_b should NOT be in classpath (hermetic mode, not a dependency)
+            assert "project_b" not in classpath_entries, \
+                f"project_b should NOT be in classpath in hermetic mode. Got: {classpath_entries}"
+            break
+    else:
+        pytest.fail("-cp argument not found in argv")
 
 
 def test_repl_load_resolve_sources_with_multiple_resolves(rule_runner: RuleRunner) -> None:
