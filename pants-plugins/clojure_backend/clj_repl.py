@@ -2,22 +2,28 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from clojure_backend.target_types import ClojureSourceField, ClojureTestSourceField
+from clojure_backend.target_types import (
+    ClojureSourceField,
+    ClojureSourceTarget,
+    ClojureTestSourceField,
+    ClojureTestTarget,
+)
 from pants.core.goals.repl import ReplImplementation, ReplRequest
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.core.util_rules.system_binaries import BashBinary
-from pants.engine.addresses import Addresses
+from pants.engine.addresses import Address, Addresses
 from pants.engine.fs import Digest, MergeDigests
 from pants.engine.internals.selectors import Get, MultiGet
 from pants.engine.rules import collect_rules, implicitly, rule
-from pants.engine.target import SourcesField, TransitiveTargets, TransitiveTargetsRequest
+from pants.engine.target import AllTargets, SourcesField, TransitiveTargets, TransitiveTargetsRequest
 from pants.engine.unions import UnionRule
 from pants.jvm.classpath import classpath as classpath_get
 from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest
 from pants.jvm.resolve.common import ArtifactRequirement, ArtifactRequirements, Coordinate
 from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
-from pants.jvm.target_types import JvmJdkField
-from pants.option.option_types import IntOption, StrOption
+from pants.jvm.subsystems import JvmSubsystem
+from pants.jvm.target_types import JvmJdkField, JvmResolveField
+from pants.option.option_types import BoolOption, IntOption, StrOption
 from pants.option.subsystem import Subsystem
 from pants.util.logging import LogLevel
 
@@ -71,6 +77,29 @@ def _prepare_repl_for_workspace(
     return prefixed_argv, prefixed_env
 
 
+class ClojureReplSubsystem(Subsystem):
+    """Configuration for Clojure REPL behavior."""
+
+    options_scope = "clojure-repl"
+    name = "Clojure REPL"
+    help = "Configuration for Clojure REPL behavior."
+
+    load_resolve_sources = BoolOption(
+        default=True,
+        help=(
+            "Load all Clojure sources in the same resolve, not just transitive dependencies.\n\n"
+            "When enabled (default), the REPL includes dependencies for ALL Clojure targets "
+            "in the same resolve as the target you're running the REPL for. This allows you "
+            "to require any namespace in the resolve without having to add explicit dependencies.\n\n"
+            "When disabled (hermetic mode), only transitive dependencies of the specified "
+            "target are loaded. This is faster but requires explicit dependencies in BUILD files.\n\n"
+            "Example:\n"
+            "  pants repl projects/foo/src/foo.clj  # All java21 sources available\n"
+            "  pants repl --no-clojure-repl-load-resolve-sources projects/foo/src/foo.clj  # Only foo's deps"
+        ),
+    )
+
+
 class NReplSubsystem(Subsystem):
     """Configuration for nREPL server."""
 
@@ -107,6 +136,32 @@ class RebelSubsystem(Subsystem):
     )
 
 
+async def _get_all_clojure_targets_in_resolve(
+    all_targets: AllTargets, jvm: JvmSubsystem, resolve_name: str
+) -> tuple[Address, ...]:
+    """Get all Clojure source and test targets in a specific resolve.
+
+    This is used to load all sources in a resolve, enabling you to require any
+    namespace without having to add explicit dependencies.
+    """
+    targets_in_resolve = []
+
+    for target in all_targets:
+        # Check if target has a resolve field and is a Clojure target
+        if not target.has_field(JvmResolveField):
+            continue
+
+        target_resolve = target[JvmResolveField].normalized_value(jvm)
+        if target_resolve != resolve_name:
+            continue
+
+        # Include both source and test targets
+        if isinstance(target, (ClojureSourceTarget, ClojureTestTarget)):
+            targets_in_resolve.append(target.address)
+
+    return tuple(targets_in_resolve)
+
+
 class ClojureRepl(ReplImplementation):
     """Standard clojure.main REPL."""
 
@@ -115,13 +170,44 @@ class ClojureRepl(ReplImplementation):
 
 
 @rule(desc="Create Clojure REPL", level=LogLevel.DEBUG)
-async def create_clojure_repl_request(repl: ClojureRepl, bash: BashBinary) -> ReplRequest:
+async def create_clojure_repl_request(
+    repl: ClojureRepl,
+    bash: BashBinary,
+    clojure_repl_subsystem: ClojureReplSubsystem,
+    jvm: JvmSubsystem,
+) -> ReplRequest:
     """Create ReplRequest for standard Clojure REPL."""
 
-    # Get classpath and transitive targets
+    # Determine addresses to load
+    addresses_to_load = repl.addresses
+
+    # If load_resolve_sources is enabled, expand to all targets in the resolve
+    if clojure_repl_subsystem.load_resolve_sources and repl.addresses:
+        # Get transitive targets to determine the resolve
+        initial_transitive = await Get(
+            TransitiveTargets, TransitiveTargetsRequest(repl.addresses)
+        )
+
+        # Find the resolve from the first root target
+        resolve_name = None
+        for tgt in initial_transitive.roots:
+            if tgt.has_field(JvmResolveField):
+                resolve_name = tgt[JvmResolveField].normalized_value(jvm)
+                break
+
+        # If we found a resolve, get all Clojure targets in that resolve
+        if resolve_name:
+            all_targets = await Get(AllTargets)
+            resolve_addresses = await _get_all_clojure_targets_in_resolve(
+                all_targets, jvm, resolve_name
+            )
+            # Merge with original addresses to ensure they're included
+            addresses_to_load = Addresses(sorted(set(repl.addresses) | set(resolve_addresses)))
+
+    # Get classpath and transitive targets using the (possibly expanded) addresses
     classpath, transitive_targets = await MultiGet(
-        classpath_get(**implicitly({repl.addresses: Addresses})),
-        Get(TransitiveTargets, TransitiveTargetsRequest(repl.addresses)),
+        classpath_get(**implicitly({addresses_to_load: Addresses})),
+        Get(TransitiveTargets, TransitiveTargetsRequest(addresses_to_load)),
     )
 
     # Extract JDK version from first target that has it, or use default
@@ -174,14 +260,44 @@ class ClojureNRepl(ReplImplementation):
 
 @rule(desc="Create nREPL server", level=LogLevel.DEBUG)
 async def create_nrepl_request(
-    repl: ClojureNRepl, bash: BashBinary, nrepl_subsystem: NReplSubsystem
+    repl: ClojureNRepl,
+    bash: BashBinary,
+    clojure_repl_subsystem: ClojureReplSubsystem,
+    nrepl_subsystem: NReplSubsystem,
+    jvm: JvmSubsystem,
 ) -> ReplRequest:
     """Create ReplRequest for nREPL server."""
 
-    # Get classpath and transitive targets
+    # Determine addresses to load
+    addresses_to_load = repl.addresses
+
+    # If load_resolve_sources is enabled, expand to all targets in the resolve
+    if clojure_repl_subsystem.load_resolve_sources and repl.addresses:
+        # Get transitive targets to determine the resolve
+        initial_transitive = await Get(
+            TransitiveTargets, TransitiveTargetsRequest(repl.addresses)
+        )
+
+        # Find the resolve from the first root target
+        resolve_name = None
+        for tgt in initial_transitive.roots:
+            if tgt.has_field(JvmResolveField):
+                resolve_name = tgt[JvmResolveField].normalized_value(jvm)
+                break
+
+        # If we found a resolve, get all Clojure targets in that resolve
+        if resolve_name:
+            all_targets = await Get(AllTargets)
+            resolve_addresses = await _get_all_clojure_targets_in_resolve(
+                all_targets, jvm, resolve_name
+            )
+            # Merge with original addresses to ensure they're included
+            addresses_to_load = Addresses(sorted(set(repl.addresses) | set(resolve_addresses)))
+
+    # Get classpath and transitive targets using the (possibly expanded) addresses
     classpath, transitive_targets = await MultiGet(
-        classpath_get(**implicitly({repl.addresses: Addresses})),
-        Get(TransitiveTargets, TransitiveTargetsRequest(repl.addresses)),
+        classpath_get(**implicitly({addresses_to_load: Addresses})),
+        Get(TransitiveTargets, TransitiveTargetsRequest(addresses_to_load)),
     )
 
     # Extract JDK version from first target that has it, or use default
@@ -273,14 +389,44 @@ class ClojureRebelRepl(ReplImplementation):
 
 @rule(desc="Create Rebel Readline REPL", level=LogLevel.DEBUG)
 async def create_rebel_repl_request(
-    repl: ClojureRebelRepl, bash: BashBinary, rebel_subsystem: RebelSubsystem
+    repl: ClojureRebelRepl,
+    bash: BashBinary,
+    clojure_repl_subsystem: ClojureReplSubsystem,
+    rebel_subsystem: RebelSubsystem,
+    jvm: JvmSubsystem,
 ) -> ReplRequest:
     """Create ReplRequest for Rebel Readline REPL."""
 
-    # Get classpath and transitive targets
+    # Determine addresses to load
+    addresses_to_load = repl.addresses
+
+    # If load_resolve_sources is enabled, expand to all targets in the resolve
+    if clojure_repl_subsystem.load_resolve_sources and repl.addresses:
+        # Get transitive targets to determine the resolve
+        initial_transitive = await Get(
+            TransitiveTargets, TransitiveTargetsRequest(repl.addresses)
+        )
+
+        # Find the resolve from the first root target
+        resolve_name = None
+        for tgt in initial_transitive.roots:
+            if tgt.has_field(JvmResolveField):
+                resolve_name = tgt[JvmResolveField].normalized_value(jvm)
+                break
+
+        # If we found a resolve, get all Clojure targets in that resolve
+        if resolve_name:
+            all_targets = await Get(AllTargets)
+            resolve_addresses = await _get_all_clojure_targets_in_resolve(
+                all_targets, jvm, resolve_name
+            )
+            # Merge with original addresses to ensure they're included
+            addresses_to_load = Addresses(sorted(set(repl.addresses) | set(resolve_addresses)))
+
+    # Get classpath and transitive targets using the (possibly expanded) addresses
     classpath, transitive_targets = await MultiGet(
-        classpath_get(**implicitly({repl.addresses: Addresses})),
-        Get(TransitiveTargets, TransitiveTargetsRequest(repl.addresses)),
+        classpath_get(**implicitly({addresses_to_load: Addresses})),
+        Get(TransitiveTargets, TransitiveTargetsRequest(addresses_to_load)),
     )
 
     # Extract JDK version from first target that has it, or use default
@@ -328,9 +474,11 @@ async def create_rebel_repl_request(
         *rebel_classpath.classpath_entries(),
     ]
 
-    # Rebel Readline uses its own main class
+    # Rebel Readline is a Clojure namespace, invoked via clojure.main -m
     argv = [
         *jdk.args(bash, classpath_entries),
+        "clojure.main",
+        "-m",
         "rebel-readline.main",
     ]
 
