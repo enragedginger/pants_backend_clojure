@@ -69,7 +69,7 @@ async def cljfmt_fmt(
         downloaded_cljfmt.exe,
         "fix",
         *cljfmt.args,
-        *request.files,
+        *request.snapshot.files,
     ]
 
     # Execute cljfmt
@@ -78,8 +78,8 @@ async def cljfmt_fmt(
         Process(
             argv=argv,
             input_digest=input_digest,
-            output_files=request.files,
-            description=f"Run cljfmt on {pluralize(len(request.files), 'file')}.",
+            output_files=request.snapshot.files,
+            description=f"Run cljfmt on {pluralize(len(request.snapshot.files), 'file')}.",
             level=LogLevel.DEBUG,
         ),
     )
