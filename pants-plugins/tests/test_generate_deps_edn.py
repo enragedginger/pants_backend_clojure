@@ -5,6 +5,7 @@ from textwrap import dedent
 import pytest
 
 from clojure_backend.generate_deps_edn import (
+    GenerateDepsEdn,
     LockFileEntry,
     format_deps_edn,
     format_deps_edn_deps,
@@ -30,7 +31,7 @@ from pants.jvm.target_types import JvmArtifactTarget
 from pants.jvm.util_rules import rules as jdk_util_rules
 from pants.testutil.rule_runner import PYTHON_BOOTSTRAP_ENV, RuleRunner
 
-from clojure_backend import compile_clj, dependency_inference
+from clojure_backend import compile_clj
 
 
 @pytest.fixture
@@ -43,7 +44,6 @@ def rule_runner() -> RuleRunner:
             *config_files.rules(),
             *coursier_fetch_rules(),
             *coursier_setup_rules(),
-            *dependency_inference.rules(),
             *generate_deps_edn_rules(),
             *jdk_util_rules(),
             *jvm_common.rules(),
@@ -407,7 +407,7 @@ def test_generate_deps_edn_simple_project(rule_runner: RuleRunner) -> None:
 
     # Run the goal
     result = rule_runner.run_goal_rule(
-        "generate-deps-edn",
+        GenerateDepsEdn,
         args=["--generate-deps-edn-resolve=jvm-default"],
         env_inherit=PYTHON_BOOTSTRAP_ENV,
     )
@@ -477,7 +477,7 @@ def test_generate_deps_edn_multiple_sources(rule_runner: RuleRunner) -> None:
 
     # Run the goal
     result = rule_runner.run_goal_rule(
-        "generate-deps-edn",
+        GenerateDepsEdn,
         args=["--generate-deps-edn-resolve=jvm-default"],
         env_inherit=PYTHON_BOOTSTRAP_ENV,
     )
@@ -552,7 +552,7 @@ def test_generate_deps_edn_with_tests(rule_runner: RuleRunner) -> None:
 
     # Run the goal
     result = rule_runner.run_goal_rule(
-        "generate-deps-edn",
+        GenerateDepsEdn,
         args=["--generate-deps-edn-resolve=jvm-default"],
         env_inherit=PYTHON_BOOTSTRAP_ENV,
     )
