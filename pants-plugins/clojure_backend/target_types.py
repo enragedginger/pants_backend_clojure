@@ -9,6 +9,7 @@ from pants.core.goals.test import (
 )
 from pants.engine.rules import collect_rules
 from pants.engine.target import (
+    BoolField,
     COMMON_TARGET_FIELDS,
     FieldSet,
     MultipleSourcesField,
@@ -34,11 +35,27 @@ class ClojureGeneratorSourcesField(MultipleSourcesField):
     expected_file_extensions = (".clj", ".cljc")
 
 
+class SkipCljfmtField(BoolField):
+    alias = "skip_cljfmt"
+    default = False
+    help = "If true, don't run cljfmt on this target's code."
+
+
 @dataclass(frozen=True)
 class ClojureFieldSet(FieldSet):
     required_fields = (ClojureSourceField,)
 
     sources: ClojureSourceField
+
+
+@dataclass(frozen=True)
+class CljfmtFieldSet(FieldSet):
+    """Field set for targets that can be formatted with cljfmt."""
+
+    required_fields = (ClojureSourceField,)
+
+    sources: ClojureSourceField
+    skip_cljfmt: SkipCljfmtField
 
 
 @dataclass(frozen=True)
@@ -63,6 +80,7 @@ class ClojureSourceTarget(Target):
         JvmMainClassNameField,
         JvmProvidesTypesField,
         JvmJdkField,
+        SkipCljfmtField,
     )
     help = "A single Clojure source file containing application or library code."
 
@@ -128,6 +146,7 @@ class ClojureTestTarget(Target):
         JvmResolveField,
         JvmProvidesTypesField,
         JvmJdkField,
+        SkipCljfmtField,
     )
     help = "A single Clojure test file using clojure.test."
 

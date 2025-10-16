@@ -1,6 +1,7 @@
 """Clojure backend for Pants."""
 
 from clojure_backend import (
+    clj_fmt,
     clj_repl,
     clj_test_runner,
     compile_clj,
@@ -31,6 +32,7 @@ def rules():
     return [
         *target_type_rules(),
         *compile_clj.rules(),
+        *clj_fmt.rules(),
         *clj_test_runner.rules(),
         *clj_repl.rules(),
         *dependency_inference.rules(),
