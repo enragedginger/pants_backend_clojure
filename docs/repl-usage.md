@@ -62,8 +62,14 @@ pants repl --shell=clojure projects/example/project-a/src:java17
 In the REPL, you can require any namespace from project-a, project-b, or project-c (all in java17 resolve):
 
 ```clojure
-(require '[example.project-b.core :as b])
-(require '[example.project-c.core :as c])
+user=> (require '[example.project-a.core :as a])
+nil
+user=> a/thing
+"example common value"
+user=> (require '[example.project-b.core :as b])
+nil
+user=> (b/use-project-a)
+"Project B using: example common value"
 ```
 
 ### Disable (Hermetic Mode)
@@ -72,7 +78,13 @@ In the REPL, you can require any namespace from project-a, project-b, or project
 pants repl --shell=clojure --no-clojure-repl-load-resolve-sources projects/example/project-a/src:java17
 ```
 
-In hermetic mode, only transitive dependencies are loaded (faster but requires explicit BUILD dependencies).
+In hermetic mode, only transitive dependencies from the BUILD file are loaded (faster but requires explicit BUILD dependencies). Namespaces not in the dependency graph will fail to load:
+
+```clojure
+user=> (require '[example.project-c.core :as c])
+Execution error (FileNotFoundException) at user/eval1 (REPL:1).
+Could not locate example/project_c/core__init.class...
+```
 
 ## Configuration Options
 

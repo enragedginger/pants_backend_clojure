@@ -12,7 +12,7 @@ from pants.core.goals.repl import ReplImplementation, ReplRequest
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.core.util_rules.system_binaries import BashBinary
 from pants.engine.addresses import Address, Addresses
-from pants.engine.fs import Digest, MergeDigests
+from pants.engine.fs import Digest, DigestContents, MergeDigests
 from pants.engine.internals.selectors import Get, MultiGet
 from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import AllTargets, SourcesField, TransitiveTargets, TransitiveTargetsRequest
@@ -162,6 +162,98 @@ async def _get_all_clojure_targets_in_resolve(
     return tuple(targets_in_resolve)
 
 
+def _determine_source_root(file_path: str, namespace: str) -> str | None:
+    """Determine the source root directory for a Clojure file.
+
+    For a file like projects/example/project-a/src/example/project_a/core.clj
+    with namespace example.project-a.core, the source root is projects/example/project-a/src.
+
+    Returns None if the namespace can't be matched to the file path.
+    """
+    # Convert namespace to expected path (example.project-a.core -> example/project_a/core.clj)
+    expected_path_parts = namespace.replace(".", "/").replace("-", "_").split("/")
+
+    # Remove .clj/.cljc extension from file path
+    clean_path = file_path
+    if clean_path.endswith(".clj"):
+        clean_path = clean_path[:-4]
+    elif clean_path.endswith(".cljc"):
+        clean_path = clean_path[:-5]
+
+    # Split the file path into parts
+    path_parts = clean_path.split("/")
+
+    # Find where the namespace path starts in the file path
+    # e.g., projects/example/project-a/src/example/project_a/core matches example/project_a/core at the end
+    for i in range(len(path_parts) - len(expected_path_parts), -1, -1):
+        if path_parts[i:] == expected_path_parts:
+            # Source root is everything before the namespace path
+            return "/".join(path_parts[:i]) if i > 0 else "."
+
+    # Fallback: use the directory containing the source file
+    return "/".join(file_path.split("/")[:-1]) if "/" in file_path else "."
+
+
+async def _gather_source_roots(addresses: Addresses) -> set[str]:
+    """Gather all source root directories for the given addresses.
+
+    Returns a set of source root paths that should be added to the classpath.
+    """
+    from clojure_backend.dependency_inference import parse_clojure_namespace
+
+    transitive_targets = await Get(TransitiveTargets, TransitiveTargetsRequest(addresses))
+    source_roots = set()
+
+    # Gather source files for all Clojure targets
+    source_files_requests = []
+    clojure_targets = []
+
+    for tgt in transitive_targets.closure:
+        if isinstance(tgt, ClojureSourceTarget) and tgt.has_field(ClojureSourceField):
+            source_files_requests.append(
+                Get(SourceFiles, SourceFilesRequest([tgt[ClojureSourceField]]))
+            )
+            clojure_targets.append(tgt)
+        elif isinstance(tgt, ClojureTestTarget) and tgt.has_field(ClojureTestSourceField):
+            source_files_requests.append(
+                Get(SourceFiles, SourceFilesRequest([tgt[ClojureTestSourceField]]))
+            )
+            clojure_targets.append(tgt)
+
+    if not source_files_requests:
+        return set()
+
+    all_source_files = await MultiGet(source_files_requests)
+
+    # Get file contents to parse namespaces
+    digest_requests = [
+        Get(DigestContents, Digest, sf.snapshot.digest) for sf in all_source_files
+    ]
+    all_digest_contents = await MultiGet(digest_requests)
+
+    # Determine source roots from namespaces
+    for i, digest_contents in enumerate(all_digest_contents):
+        if not digest_contents:
+            # Fallback: use target directory
+            source_roots.add(clojure_targets[i].address.spec_path or ".")
+            continue
+
+        # Parse first file's namespace
+        file_content = digest_contents[0].content.decode("utf-8")
+        namespace = parse_clojure_namespace(file_content)
+
+        if namespace:
+            file_path = digest_contents[0].path
+            source_root = _determine_source_root(file_path, namespace)
+            if source_root:
+                source_roots.add(source_root)
+        else:
+            # Fallback: use target directory
+            source_roots.add(clojure_targets[i].address.spec_path or ".")
+
+    return source_roots
+
+
 class ClojureRepl(ReplImplementation):
     """Standard clojure.main REPL."""
 
@@ -204,10 +296,11 @@ async def create_clojure_repl_request(
             # Merge with original addresses to ensure they're included
             addresses_to_load = Addresses(sorted(set(repl.addresses) | set(resolve_addresses)))
 
-    # Get classpath and transitive targets using the (possibly expanded) addresses
-    classpath, transitive_targets = await MultiGet(
+    # Get classpath, transitive targets, and source roots using the (possibly expanded) addresses
+    classpath, transitive_targets, source_roots = await MultiGet(
         classpath_get(**implicitly({addresses_to_load: Addresses})),
         Get(TransitiveTargets, TransitiveTargetsRequest(addresses_to_load)),
+        _gather_source_roots(addresses_to_load),
     )
 
     # Extract JDK version from first target that has it, or use default
@@ -228,8 +321,8 @@ async def create_clojure_repl_request(
     )
 
     # Build command for clojure.main REPL
-    # "." in classpath refers to workspace directory when run_in_workspace=True
-    classpath_entries = [".", *classpath.args()]
+    # Source roots are added to classpath so Clojure can find source files
+    classpath_entries = [*sorted(source_roots), *classpath.args()]
     argv = [
         *jdk.args(bash, classpath_entries),
         "clojure.main",
@@ -294,10 +387,11 @@ async def create_nrepl_request(
             # Merge with original addresses to ensure they're included
             addresses_to_load = Addresses(sorted(set(repl.addresses) | set(resolve_addresses)))
 
-    # Get classpath and transitive targets using the (possibly expanded) addresses
-    classpath, transitive_targets = await MultiGet(
+    # Get classpath, transitive targets, and source roots using the (possibly expanded) addresses
+    classpath, transitive_targets, source_roots = await MultiGet(
         classpath_get(**implicitly({addresses_to_load: Addresses})),
         Get(TransitiveTargets, TransitiveTargetsRequest(addresses_to_load)),
+        _gather_source_roots(addresses_to_load),
     )
 
     # Extract JDK version from first target that has it, or use default
@@ -341,9 +435,9 @@ async def create_nrepl_request(
     port = nrepl_subsystem.port
     host = nrepl_subsystem.host
 
-    # "." in classpath refers to workspace directory when run_in_workspace=True
+    # Source roots are added to classpath so Clojure can find source files
     classpath_entries = [
-        ".",
+        *sorted(source_roots),
         *classpath.args(),
         *nrepl_classpath.classpath_entries(),
     ]
@@ -423,10 +517,11 @@ async def create_rebel_repl_request(
             # Merge with original addresses to ensure they're included
             addresses_to_load = Addresses(sorted(set(repl.addresses) | set(resolve_addresses)))
 
-    # Get classpath and transitive targets using the (possibly expanded) addresses
-    classpath, transitive_targets = await MultiGet(
+    # Get classpath, transitive targets, and source roots using the (possibly expanded) addresses
+    classpath, transitive_targets, source_roots = await MultiGet(
         classpath_get(**implicitly({addresses_to_load: Addresses})),
         Get(TransitiveTargets, TransitiveTargetsRequest(addresses_to_load)),
+        _gather_source_roots(addresses_to_load),
     )
 
     # Extract JDK version from first target that has it, or use default
@@ -467,9 +562,9 @@ async def create_rebel_repl_request(
     )
 
     # Build Rebel Readline REPL startup command
-    # "." in classpath refers to workspace directory when run_in_workspace=True
+    # Source roots are added to classpath so Clojure can find source files
     classpath_entries = [
-        ".",
+        *sorted(source_roots),
         *classpath.args(),
         *rebel_classpath.classpath_entries(),
     ]
