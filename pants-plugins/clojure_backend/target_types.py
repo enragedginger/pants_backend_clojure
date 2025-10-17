@@ -41,6 +41,12 @@ class SkipCljfmtField(BoolField):
     help = "If true, don't run cljfmt on this target's code."
 
 
+class SkipCljKondoField(BoolField):
+    alias = "skip_clj_kondo"
+    default = False
+    help = "If true, don't run clj-kondo on this target's code."
+
+
 @dataclass(frozen=True)
 class ClojureFieldSet(FieldSet):
     required_fields = (ClojureSourceField,)
@@ -56,6 +62,16 @@ class CljfmtFieldSet(FieldSet):
 
     sources: ClojureSourceField
     skip_cljfmt: SkipCljfmtField
+
+
+@dataclass(frozen=True)
+class CljKondoFieldSet(FieldSet):
+    """Field set for targets that can be linted with clj-kondo."""
+
+    required_fields = (ClojureSourceField,)
+
+    sources: ClojureSourceField
+    skip_clj_kondo: SkipCljKondoField
 
 
 @dataclass(frozen=True)
@@ -81,6 +97,7 @@ class ClojureSourceTarget(Target):
         JvmProvidesTypesField,
         JvmJdkField,
         SkipCljfmtField,
+        SkipCljKondoField,
     )
     help = "A single Clojure source file containing application or library code."
 
@@ -147,6 +164,7 @@ class ClojureTestTarget(Target):
         JvmProvidesTypesField,
         JvmJdkField,
         SkipCljfmtField,
+        SkipCljKondoField,
     )
     help = "A single Clojure test file using clojure.test."
 
