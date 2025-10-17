@@ -72,6 +72,7 @@ class CljKondoFieldSet(FieldSet):
 
     sources: ClojureSourceField
     skip_clj_kondo: SkipCljKondoField
+    resolve: JvmResolveField
 
 
 @dataclass(frozen=True)

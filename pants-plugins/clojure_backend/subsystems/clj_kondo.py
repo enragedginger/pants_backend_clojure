@@ -43,6 +43,28 @@ class CljKondo(ExternalTool):
 
     args = ArgsListOption(example="--fail-level warning --parallel")
 
+    use_cache = BoolOption(
+        default=True,
+        advanced=True,
+        help=(
+            "Use clj-kondo's built-in caching to speed up incremental linting. "
+            "The cache is stored in Pants' named cache directory and persists "
+            "across runs. Recommended for all workflows, especially with "
+            "'use_classpath' enabled."
+        ),
+    )
+
+    use_classpath = BoolOption(
+        default=True,
+        advanced=True,
+        help=(
+            "Include the full JVM classpath (transitive dependencies) when linting. "
+            "This allows clj-kondo to resolve symbols from dependencies and detect "
+            "more issues. Highly recommended for accuracy. May increase first-run "
+            "time, but subsequent runs are fast due to caching."
+        ),
+    )
+
     def generate_url(self, plat: Platform) -> str:
         """Generate download URL for clj-kondo binary."""
         platform_mapping = {

@@ -17,6 +17,11 @@ from pants.core.util_rules import config_files, external_tool, source_files
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.engine.addresses import Address
 from pants.engine.rules import QueryRule
+from pants.jvm import classpath, jvm_common, non_jvm_dependencies
+from pants.jvm.resolve.coursier_fetch import rules as coursier_fetch_rules
+from pants.jvm.resolve.coursier_setup import rules as coursier_setup_rules
+from pants.jvm.target_types import JvmArtifactTarget
+from pants.jvm.util_rules import rules as jdk_util_rules
 from pants.testutil.rule_runner import RuleRunner
 
 
@@ -24,9 +29,15 @@ from pants.testutil.rule_runner import RuleRunner
 def rule_runner() -> RuleRunner:
     rule_runner = RuleRunner(
         rules=[
+            *classpath.rules(),
             *config_files.rules(),
+            *coursier_fetch_rules(),
+            *coursier_setup_rules(),
             *external_tool.rules(),
+            *jdk_util_rules(),
+            *jvm_common.rules(),
             *lint_rules(),
+            *non_jvm_dependencies.rules(),
             *source_files.rules(),
             *target_types_rules(),
             QueryRule(LintResult, [CljKondoRequest.Batch]),
@@ -36,6 +47,7 @@ def rule_runner() -> RuleRunner:
             ClojureSourceTarget,
             ClojureSourcesGeneratorTarget,
             ClojureTestTarget,
+            JvmArtifactTarget,
         ],
     )
     return rule_runner
@@ -50,6 +62,8 @@ def run_clj_kondo(
     rule_runner.set_options(
         [
             "--backend-packages=clojure_backend",
+            "--no-clj-kondo-use-classpath",  # Disable classpath support in tests for now
+            "--no-clj-kondo-use-cache",  # Disable cache support in tests for now
             *(extra_args or []),
         ],
         env_inherit={"PATH", "PYENV_ROOT", "HOME"},
