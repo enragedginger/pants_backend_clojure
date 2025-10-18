@@ -14,6 +14,8 @@ from pants.engine.target import (
     FieldSet,
     MultipleSourcesField,
     SingleSourceField,
+    StringField,
+    StringSequenceField,
     Target,
     TargetFilesGenerator,
     generate_multiple_sources_field_help_message,
@@ -24,6 +26,7 @@ from pants.jvm.target_types import (
     JvmMainClassNameField,
     JvmProvidesTypesField,
     JvmResolveField,
+    OutputPathField,
 )
 
 
@@ -215,6 +218,55 @@ class ClojureTestsGeneratorTarget(TargetFilesGenerator):
         JvmResolveField,
     )
     help = "Generate a `clojure_test` target for each file in the `sources` field."
+
+
+# -----------------------------------------------------------------------------------------------
+# `clojure_deploy_jar` target for creating uberjars
+# -----------------------------------------------------------------------------------------------
+
+
+class ClojureMainNamespaceField(StringField):
+    alias = "main"
+    required = True
+    help = (
+        "Main namespace with -main function and (:gen-class) in its ns declaration. "
+        "Example: 'my.app.core'. This namespace will be AOT compiled and used as the "
+        "entry point for the executable JAR."
+    )
+
+
+class ClojureAOTNamespacesField(StringSequenceField):
+    alias = "aot"
+    help = (
+        "Namespaces to AOT compile. Options:\n"
+        "- Empty (default): Compile only main namespace (transitive)\n"
+        "- [':all']: Compile all project namespaces from dependencies\n"
+        "- ['ns1', 'ns2']: Compile specific namespaces\n\n"
+        "Note: AOT compilation is transitive - compiling a namespace will "
+        "automatically compile all namespaces it requires."
+    )
+    default = ()  # Empty = main namespace only (transitive)
+
+
+class ClojureDeployJarTarget(Target):
+    alias = "clojure_deploy_jar"
+    core_fields = (
+        *COMMON_TARGET_FIELDS,
+        JvmDependenciesField,
+        ClojureMainNamespaceField,
+        ClojureAOTNamespacesField,
+        JvmResolveField,
+        JvmJdkField,
+        OutputPathField,
+    )
+    help = (
+        "A Clojure application packaged as an executable JAR (uberjar).\n\n"
+        "The main namespace will be AOT compiled along with its dependencies, "
+        "and packaged with all transitive dependencies into a single JAR file "
+        "that can be executed with `java -jar`.\n\n"
+        "The main namespace must include (:gen-class) in its ns declaration and "
+        "define a -main function."
+    )
 
 
 def rules():
