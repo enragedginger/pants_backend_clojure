@@ -66,7 +66,7 @@ async def aot_compile_clojure(
     """
 
     # Get JDK environment
-    jdk_request = JdkRequest.from_field(request.jdk) if request.jdk else JdkRequest()
+    jdk_request = JdkRequest.from_field(request.jdk) if request.jdk else JdkRequest.SOURCE_DEFAULT
 
     # Fetch Clojure compiler (needed for AOT compilation)
     clojure_artifact = ArtifactRequirement(

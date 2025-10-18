@@ -139,7 +139,16 @@ async def package_clojure_deploy_jar(
         )
 
     # Check for (:gen-class) in the namespace declaration
-    if ":gen-class" not in main_source_file and "gen-class" not in main_source_file:
+    # Use a more robust check that looks for gen-class in the ns form, not just anywhere
+    # This regex looks for (ns ...) followed by gen-class before the closing paren
+    # It handles multi-line ns declarations with multiple clauses
+    ns_with_gen_class = re.search(
+        r'\(ns\s+[\w.-]+.*?\(:gen-class',
+        main_source_file,
+        re.DOTALL,
+    )
+
+    if not ns_with_gen_class:
         raise ValueError(
             f"Main namespace '{main_namespace}' must include (:gen-class) in its ns declaration "
             f"to be used as an entry point for an executable JAR.\n\n"
