@@ -11,8 +11,9 @@ from pants.core.goals.package import (
 )
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.engine.addresses import Addresses
-from pants.engine.fs import Digest, DigestContents, MergeDigests, Snapshot
-from pants.engine.internals.selectors import Get
+from pants.engine.fs import CreateDigest, Digest, DigestContents, FileContent, MergeDigests, Snapshot
+from pants.engine.internals.selectors import Get, MultiGet
+from pants.engine.process import Process, ProcessResult
 from pants.engine.rules import collect_rules, rule
 from pants.engine.target import (
     Target,
@@ -20,7 +21,9 @@ from pants.engine.target import (
     TransitiveTargetsRequest,
 )
 from pants.engine.unions import UnionRule
+from pants.jvm.classpath import Classpath
 from pants.jvm.goals import lockfile
+from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest, JvmProcess
 from pants.jvm.package.deploy_jar import (
     DeployJarFieldSet,
 )
@@ -176,35 +179,109 @@ async def package_clojure_deploy_jar(
     # Get source addresses for AOT compilation
     source_addresses = Addresses(tgt.address for tgt in clojure_source_targets)
 
-    # Perform AOT compilation
-    compiled_classes = await Get(
-        CompiledClojureClasses,
-        CompileClojureAOTRequest(
-            namespaces=namespaces_to_compile,
-            source_addresses=source_addresses,
-            jdk=field_set.jdk,
-            resolve=field_set.resolve,
+    # Get JDK request from field
+    jdk_request = JdkRequest.from_field(field_set.jdk)
+
+    # Get JDK environment and classpath for dependencies
+    jdk_env, classpath, compiled_classes = await MultiGet(
+        Get(JdkEnvironment, JdkRequest, jdk_request),
+        Get(Classpath, Addresses, source_addresses),
+        Get(
+            CompiledClojureClasses,
+            CompileClojureAOTRequest(
+                namespaces=namespaces_to_compile,
+                source_addresses=source_addresses,
+                jdk=field_set.jdk,
+                resolve=field_set.resolve,
+            ),
         ),
     )
-
-    # For now, return a BuiltPackage with the compiled classes
-    # In a full implementation, this would delegate to deploy_jar
-    # to create the actual JAR with all dependencies
 
     # Determine output filename
     output_filename = field_set.output_path.value_or_default(
         file_ending="jar",
     )
 
-    # TODO: This is a simplified implementation
-    # A complete implementation would use deploy_jar to package everything
-    # For now, we return the compiled classes
+    # Create JAR manifest with main class
+    manifest_content = f"""\
+Manifest-Version: 1.0
+Main-Class: {main_class_name}
+Created-By: Pants Build System
+"""
+
+    # Create a Python script to build the uberjar
+    # JARs are ZIP files, so we use Python's zipfile module
+    build_jar_script = f'''\
+#!/usr/bin/env python3
+import zipfile
+import os
+import sys
+from pathlib import Path
+
+output_jar = "{output_filename}"
+manifest_content = """{manifest_content}"""
+
+# Create the JAR file (which is just a ZIP)
+with zipfile.ZipFile(output_jar, 'w', zipfile.ZIP_DEFLATED) as jar:
+    # Write manifest first (uncompressed as per JAR spec)
+    jar.writestr('META-INF/MANIFEST.MF', manifest_content, compress_type=zipfile.ZIP_STORED)
+
+    # Extract and add all dependency JARs
+    for jar_file in Path('.').glob('*.jar'):
+        try:
+            with zipfile.ZipFile(jar_file, 'r') as dep_jar:
+                for item in dep_jar.namelist():
+                    # Skip META-INF files from dependencies to avoid conflicts
+                    if not item.startswith('META-INF/'):
+                        try:
+                            data = dep_jar.read(item)
+                            jar.writestr(item, data)
+                        except Exception:
+                            pass  # Skip duplicates or bad entries
+        except Exception as e:
+            print(f"Warning: Could not process {{jar_file}}: {{e}}", file=sys.stderr)
+
+    # Add compiled classes
+    classes_dir = Path('classes')
+    if classes_dir.exists():
+        for class_file in classes_dir.rglob('*.class'):
+            arcname = str(class_file.relative_to(classes_dir))
+            jar.write(class_file, arcname)
+
+print(f"Created {{output_jar}}")
+'''
+
+    build_script_file = FileContent("__build_jar.py", build_jar_script.encode("utf-8"))
+    build_script_digest = await Get(Digest, CreateDigest([build_script_file]))
+
+    # Merge compiled classes and dependencies with build script
+    build_input_digest = await Get(
+        Digest,
+        MergeDigests([
+            compiled_classes.digest,
+            *classpath.digests(),
+            build_script_digest,
+        ]),
+    )
+
+    # Execute the jar building script using Python
+    process_result = await Get(
+        ProcessResult,
+        Process(
+            argv=["/usr/bin/python3", "__build_jar.py"],
+            input_digest=build_input_digest,
+            output_files=(output_filename,),
+            description=f"Creating Clojure uberjar: {output_filename}",
+        ),
+    )
+
+    # Return the built JAR
     artifact = BuiltPackageArtifact(
         relpath=output_filename,
     )
 
     return BuiltPackage(
-        digest=compiled_classes.digest,
+        digest=process_result.output_digest,
         artifacts=(artifact,),
     )
 
