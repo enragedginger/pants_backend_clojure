@@ -11,6 +11,7 @@ from clojure_backend import (
     generate_deps_edn,
     package_clojure_deploy_jar,
 )
+from clojure_backend.goals import check
 from clojure_backend.target_types import (
     ClojureDeployJarTarget,
     ClojureSourceTarget,
@@ -45,4 +46,5 @@ def rules():
         *clj_repl.rules(),
         *dependency_inference.rules(),
         *generate_deps_edn.rules(),
+        *check.rules(),
     ]
