@@ -286,3 +286,147 @@ def test_default_clojure_version() -> None:
     assert isinstance(DEFAULT_CLOJURE_VERSION, str)
     # Should be a version string like "1.11.1"
     assert "." in DEFAULT_CLOJURE_VERSION
+
+
+def test_aot_compile_syntax_error_fails(rule_runner: RuleRunner) -> None:
+    """Test that AOT compilation fails gracefully with syntax errors."""
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": "{}",
+            "src/bad/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="syntax_error",
+                    source="syntax_error.clj",
+                )
+                """
+            ),
+            "src/bad/syntax_error.clj": dedent(
+                """\
+                (ns bad.syntax-error
+                  (:gen-class))
+
+                (defn broken-fn []
+                  ; Missing closing parenthesis
+                  (+ 1 2
+                """
+            ),
+        }
+    )
+
+    target_address = Address("src/bad", target_name="syntax_error")
+    request = CompileClojureAOTRequest(
+        namespaces=("bad.syntax-error",),
+        source_addresses=Addresses([target_address]),
+        jdk=None,
+        resolve=None,
+    )
+
+    # Compilation should fail due to syntax error
+    with pytest.raises(Exception):
+        rule_runner.request(CompiledClojureClasses, [request])
+
+
+def test_aot_compile_mixed_gen_class_and_regular_namespaces(rule_runner: RuleRunner) -> None:
+    """Test AOT compiling with both gen-class and regular namespaces."""
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": "{}",
+            "src/mixed/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="util",
+                    source="util.clj",
+                )
+                clojure_source(
+                    name="main",
+                    source="main.clj",
+                    dependencies=[":util"],
+                )
+                """
+            ),
+            "src/mixed/util.clj": dedent(
+                """\
+                (ns mixed.util)
+                ; No gen-class - this is a regular namespace
+
+                (defn helper-fn [x]
+                  (* x 2))
+                """
+            ),
+            "src/mixed/main.clj": dedent(
+                """\
+                (ns mixed.main
+                  (:gen-class)
+                  (:require [mixed.util :as util]))
+
+                (defn -main [& args]
+                  (println (util/helper-fn 21)))
+                """
+            ),
+        }
+    )
+
+    # Compile both namespaces - only main should have gen-class
+    main_address = Address("src/mixed", target_name="main")
+    util_address = Address("src/mixed", target_name="util")
+    request = CompileClojureAOTRequest(
+        namespaces=("mixed.main", "mixed.util"),
+        source_addresses=Addresses([main_address, util_address]),
+        jdk=None,
+        resolve=None,
+    )
+
+    result = rule_runner.request(CompiledClojureClasses, [request])
+    contents = rule_runner.request(DigestContents, [result.digest])
+    class_files = [fc.path for fc in contents]
+
+    # mixed.main should have .class files (has gen-class)
+    assert any("mixed/main.class" in path for path in class_files)
+    # mixed.util should also be compiled (AOT compiles dependencies)
+    # but it won't have a main .class file since no gen-class
+    assert any("mixed/util" in path for path in class_files)
+
+
+def test_aot_compile_namespace_without_gen_class(rule_runner: RuleRunner) -> None:
+    """Test that compiling a namespace without gen-class still works."""
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": "{}",
+            "src/plain/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="lib",
+                    source="lib.clj",
+                )
+                """
+            ),
+            "src/plain/lib.clj": dedent(
+                """\
+                (ns plain.lib)
+                ; No gen-class - just a regular library
+
+                (defn compute [x y]
+                  (+ x y))
+                """
+            ),
+        }
+    )
+
+    target_address = Address("src/plain", target_name="lib")
+    request = CompileClojureAOTRequest(
+        namespaces=("plain.lib",),
+        source_addresses=Addresses([target_address]),
+        jdk=None,
+        resolve=None,
+    )
+
+    result = rule_runner.request(CompiledClojureClasses, [request])
+    contents = rule_runner.request(DigestContents, [result.digest])
+    class_files = [fc.path for fc in contents]
+
+    # Should still generate __init and function classes
+    assert any("plain/lib__init.class" in path for path in class_files)
+    assert any("plain/lib$compute.class" in path for path in class_files)
+    # But no main .class file since no gen-class
+    assert not any("plain/lib.class" == path for path in class_files)
