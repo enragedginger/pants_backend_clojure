@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from clojure_backend.target_types import (
     ClojureSourceField,
@@ -19,7 +20,7 @@ from pants.engine.internals.selectors import Get, MultiGet
 from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import AllTargets, SourcesField, TransitiveTargets, TransitiveTargetsRequest
 from pants.engine.unions import UnionRule
-from pants.jvm.classpath import classpath as classpath_get
+from pants.jvm.classpath import Classpath, classpath as classpath_get
 from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest
 from pants.jvm.resolve.common import ArtifactRequirement, ArtifactRequirements, Coordinate
 from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
@@ -223,30 +224,49 @@ async def _gather_source_roots(addresses: Addresses) -> set[str]:
     return source_roots
 
 
-class ClojureRepl(ReplImplementation):
-    """Standard clojure.main REPL."""
+@dataclass(frozen=True)
+class _ReplSetup:
+    """Common setup data for all REPL types.
 
-    name = "clojure"
-    supports_args = True
+    This encapsulates the shared setup logic for all REPL implementations,
+    including address resolution, classpath gathering, and JDK configuration.
+    """
+
+    addresses_to_load: Addresses
+    classpath: Classpath
+    transitive_targets: TransitiveTargets
+    source_roots: set[str]
+    jdk: JdkEnvironment
 
 
-@rule(desc="Create Clojure REPL", level=LogLevel.DEBUG)
-async def create_clojure_repl_request(
-    repl: ClojureRepl,
-    bash: BashBinary,
-    clojure_repl_subsystem: ClojureReplSubsystem,
+async def _prepare_repl_setup(
+    addresses: Addresses,
+    load_resolve_sources: bool,
     jvm: JvmSubsystem,
-) -> ReplRequest:
-    """Create ReplRequest for standard Clojure REPL."""
+) -> _ReplSetup:
+    """Prepare common REPL setup for all REPL implementations.
 
+    This function handles:
+    1. Address resolution (with load_resolve_sources logic)
+    2. Gathering classpath, transitive targets, and source roots
+    3. Extracting JDK version and environment
+
+    Args:
+        addresses: Initial addresses to create REPL for
+        load_resolve_sources: Whether to load all sources in the resolve
+        jvm: JVM subsystem for resolve information
+
+    Returns:
+        _ReplSetup containing all common setup data
+    """
     # Determine addresses to load
-    addresses_to_load = repl.addresses
+    addresses_to_load = addresses
 
     # If load_resolve_sources is enabled, expand to all targets in the resolve
-    if clojure_repl_subsystem.load_resolve_sources and repl.addresses:
+    if load_resolve_sources and addresses:
         # Get transitive targets to determine the resolve
         initial_transitive = await Get(
-            TransitiveTargets, TransitiveTargetsRequest(repl.addresses)
+            TransitiveTargets, TransitiveTargetsRequest(addresses)
         )
 
         # Find the resolve from the first root target
@@ -263,7 +283,7 @@ async def create_clojure_repl_request(
                 all_targets, jvm, resolve_name
             )
             # Merge with original addresses to ensure they're included
-            addresses_to_load = Addresses(sorted(set(repl.addresses) | set(resolve_addresses)))
+            addresses_to_load = Addresses(sorted(set(addresses) | set(resolve_addresses)))
 
     # Get classpath, transitive targets, and source roots using the (possibly expanded) addresses
     classpath, transitive_targets, source_roots = await MultiGet(
@@ -282,31 +302,62 @@ async def create_clojure_repl_request(
     # Get JDK environment
     jdk = await Get(JdkEnvironment, JdkRequest, jdk_request)
 
+    return _ReplSetup(
+        addresses_to_load=addresses_to_load,
+        classpath=classpath,
+        transitive_targets=transitive_targets,
+        source_roots=source_roots,
+        jdk=jdk,
+    )
+
+
+class ClojureRepl(ReplImplementation):
+    """Standard clojure.main REPL."""
+
+    name = "clojure"
+    supports_args = True
+
+
+@rule(desc="Create Clojure REPL", level=LogLevel.DEBUG)
+async def create_clojure_repl_request(
+    repl: ClojureRepl,
+    bash: BashBinary,
+    clojure_repl_subsystem: ClojureReplSubsystem,
+    jvm: JvmSubsystem,
+) -> ReplRequest:
+    """Create ReplRequest for standard Clojure REPL."""
+    # Use shared setup logic
+    setup = await _prepare_repl_setup(
+        repl.addresses,
+        clojure_repl_subsystem.load_resolve_sources,
+        jvm,
+    )
+
     # For run_in_workspace=True, don't include source files in digest - they'll be
     # loaded from the workspace. Only include classpath JARs.
     input_digest = await Get(
         Digest,
-        MergeDigests(classpath.digests()),
+        MergeDigests(setup.classpath.digests()),
     )
 
     # Build command for clojure.main REPL
     # Source roots are added to classpath so Clojure can find source files
-    classpath_entries = [*sorted(source_roots), *classpath.args()]
+    classpath_entries = [*sorted(setup.source_roots), *setup.classpath.args()]
     argv = [
-        *jdk.args(bash, classpath_entries),
+        *setup.jdk.args(bash, classpath_entries),
         "clojure.main",
         "--repl",
     ]
 
     # Prepare for run_in_workspace=True by prefixing JDK/coursier paths with {chroot}/
-    argv, extra_env = _prepare_repl_for_workspace(argv, jdk.env, jdk)
+    argv, extra_env = _prepare_repl_for_workspace(argv, setup.jdk.env, setup.jdk)
 
     return ReplRequest(
         digest=input_digest,
         args=argv,
         extra_env=extra_env,
-        immutable_input_digests=jdk.immutable_input_digests,
-        append_only_caches=jdk.append_only_caches,
+        immutable_input_digests=setup.jdk.immutable_input_digests,
+        append_only_caches=setup.jdk.append_only_caches,
         # run_in_workspace=True allows the REPL to see live file changes in the workspace.
         # Source files are loaded from workspace via "." in classpath.
         run_in_workspace=True,
@@ -329,46 +380,12 @@ async def create_nrepl_request(
     jvm: JvmSubsystem,
 ) -> ReplRequest:
     """Create ReplRequest for nREPL server."""
-
-    # Determine addresses to load
-    addresses_to_load = repl.addresses
-
-    # If load_resolve_sources is enabled, expand to all targets in the resolve
-    if clojure_repl_subsystem.load_resolve_sources and repl.addresses:
-        # Get transitive targets to determine the resolve
-        initial_transitive = await Get(
-            TransitiveTargets, TransitiveTargetsRequest(repl.addresses)
-        )
-
-        # Find the resolve from the first root target
-        resolve_name = None
-        for tgt in initial_transitive.roots:
-            if tgt.has_field(JvmResolveField):
-                resolve_name = tgt[JvmResolveField].normalized_value(jvm)
-                break
-
-        # If we found a resolve, get all Clojure targets in that resolve
-        if resolve_name:
-            all_targets = await Get(AllTargets)
-            resolve_addresses = await _get_all_clojure_targets_in_resolve(
-                all_targets, jvm, resolve_name
-            )
-            # Merge with original addresses to ensure they're included
-            addresses_to_load = Addresses(sorted(set(repl.addresses) | set(resolve_addresses)))
-
-    # Get classpath, transitive targets, and source roots using the (possibly expanded) addresses
-    classpath, transitive_targets, source_roots = await MultiGet(
-        classpath_get(**implicitly({addresses_to_load: Addresses})),
-        Get(TransitiveTargets, TransitiveTargetsRequest(addresses_to_load)),
-        _gather_source_roots(addresses_to_load),
+    # Use shared setup logic
+    setup = await _prepare_repl_setup(
+        repl.addresses,
+        clojure_repl_subsystem.load_resolve_sources,
+        jvm,
     )
-
-    # Extract JDK version from first target that has it, or use default
-    jdk_request = JdkRequest.SOURCE_DEFAULT
-    for tgt in transitive_targets.roots:
-        if tgt.has_field(JvmJdkField):
-            jdk_request = JdkRequest.from_field(tgt[JvmJdkField])
-            break
 
     # Get nREPL artifact requirement
     nrepl_artifact = ArtifactRequirement(
@@ -379,14 +396,11 @@ async def create_nrepl_request(
         )
     )
 
-    # Get JDK environment and nREPL classpath in parallel
-    jdk, nrepl_classpath = await MultiGet(
-        Get(JdkEnvironment, JdkRequest, jdk_request),
-        Get(
-            ToolClasspath,
-            ToolClasspathRequest(
-                artifact_requirements=ArtifactRequirements([nrepl_artifact]),
-            ),
+    # Get nREPL classpath
+    nrepl_classpath = await Get(
+        ToolClasspath,
+        ToolClasspathRequest(
+            artifact_requirements=ArtifactRequirements([nrepl_artifact]),
         ),
     )
 
@@ -395,7 +409,7 @@ async def create_nrepl_request(
     input_digest = await Get(
         Digest,
         MergeDigests([
-            *classpath.digests(),
+            *setup.classpath.digests(),
             nrepl_classpath.digest,
         ]),
     )
@@ -406,8 +420,8 @@ async def create_nrepl_request(
 
     # Source roots are added to classpath so Clojure can find source files
     classpath_entries = [
-        *sorted(source_roots),
-        *classpath.args(),
+        *sorted(setup.source_roots),
+        *setup.classpath.args(),
         *nrepl_classpath.classpath_entries(),
     ]
 
@@ -422,21 +436,21 @@ async def create_nrepl_request(
     )
 
     argv = [
-        *jdk.args(bash, classpath_entries),
+        *setup.jdk.args(bash, classpath_entries),
         "clojure.main",
         "-e",
         nrepl_start_code,
     ]
 
     # Prepare for run_in_workspace=True by prefixing JDK/coursier paths with {chroot}/
-    argv, extra_env = _prepare_repl_for_workspace(argv, jdk.env, jdk)
+    argv, extra_env = _prepare_repl_for_workspace(argv, setup.jdk.env, setup.jdk)
 
     return ReplRequest(
         digest=input_digest,
         args=argv,
         extra_env=extra_env,
-        immutable_input_digests=jdk.immutable_input_digests,
-        append_only_caches=jdk.append_only_caches,
+        immutable_input_digests=setup.jdk.immutable_input_digests,
+        append_only_caches=setup.jdk.append_only_caches,
         # run_in_workspace=True allows the REPL to see live file changes in the workspace.
         # Source files are loaded from workspace via "." in classpath.
         run_in_workspace=True,
@@ -459,46 +473,12 @@ async def create_rebel_repl_request(
     jvm: JvmSubsystem,
 ) -> ReplRequest:
     """Create ReplRequest for Rebel Readline REPL."""
-
-    # Determine addresses to load
-    addresses_to_load = repl.addresses
-
-    # If load_resolve_sources is enabled, expand to all targets in the resolve
-    if clojure_repl_subsystem.load_resolve_sources and repl.addresses:
-        # Get transitive targets to determine the resolve
-        initial_transitive = await Get(
-            TransitiveTargets, TransitiveTargetsRequest(repl.addresses)
-        )
-
-        # Find the resolve from the first root target
-        resolve_name = None
-        for tgt in initial_transitive.roots:
-            if tgt.has_field(JvmResolveField):
-                resolve_name = tgt[JvmResolveField].normalized_value(jvm)
-                break
-
-        # If we found a resolve, get all Clojure targets in that resolve
-        if resolve_name:
-            all_targets = await Get(AllTargets)
-            resolve_addresses = await _get_all_clojure_targets_in_resolve(
-                all_targets, jvm, resolve_name
-            )
-            # Merge with original addresses to ensure they're included
-            addresses_to_load = Addresses(sorted(set(repl.addresses) | set(resolve_addresses)))
-
-    # Get classpath, transitive targets, and source roots using the (possibly expanded) addresses
-    classpath, transitive_targets, source_roots = await MultiGet(
-        classpath_get(**implicitly({addresses_to_load: Addresses})),
-        Get(TransitiveTargets, TransitiveTargetsRequest(addresses_to_load)),
-        _gather_source_roots(addresses_to_load),
+    # Use shared setup logic
+    setup = await _prepare_repl_setup(
+        repl.addresses,
+        clojure_repl_subsystem.load_resolve_sources,
+        jvm,
     )
-
-    # Extract JDK version from first target that has it, or use default
-    jdk_request = JdkRequest.SOURCE_DEFAULT
-    for tgt in transitive_targets.roots:
-        if tgt.has_field(JvmJdkField):
-            jdk_request = JdkRequest.from_field(tgt[JvmJdkField])
-            break
 
     # Get Rebel Readline artifact requirement
     rebel_artifact = ArtifactRequirement(
@@ -509,14 +489,11 @@ async def create_rebel_repl_request(
         )
     )
 
-    # Get JDK environment and Rebel classpath in parallel
-    jdk, rebel_classpath = await MultiGet(
-        Get(JdkEnvironment, JdkRequest, jdk_request),
-        Get(
-            ToolClasspath,
-            ToolClasspathRequest(
-                artifact_requirements=ArtifactRequirements([rebel_artifact]),
-            ),
+    # Get Rebel classpath
+    rebel_classpath = await Get(
+        ToolClasspath,
+        ToolClasspathRequest(
+            artifact_requirements=ArtifactRequirements([rebel_artifact]),
         ),
     )
 
@@ -525,7 +502,7 @@ async def create_rebel_repl_request(
     input_digest = await Get(
         Digest,
         MergeDigests([
-            *classpath.digests(),
+            *setup.classpath.digests(),
             rebel_classpath.digest,
         ]),
     )
@@ -533,28 +510,28 @@ async def create_rebel_repl_request(
     # Build Rebel Readline REPL startup command
     # Source roots are added to classpath so Clojure can find source files
     classpath_entries = [
-        *sorted(source_roots),
-        *classpath.args(),
+        *sorted(setup.source_roots),
+        *setup.classpath.args(),
         *rebel_classpath.classpath_entries(),
     ]
 
     # Rebel Readline is a Clojure namespace, invoked via clojure.main -m
     argv = [
-        *jdk.args(bash, classpath_entries),
+        *setup.jdk.args(bash, classpath_entries),
         "clojure.main",
         "-m",
         "rebel-readline.main",
     ]
 
     # Prepare for run_in_workspace=True by prefixing JDK/coursier paths with {chroot}/
-    argv, extra_env = _prepare_repl_for_workspace(argv, jdk.env, jdk)
+    argv, extra_env = _prepare_repl_for_workspace(argv, setup.jdk.env, setup.jdk)
 
     return ReplRequest(
         digest=input_digest,
         args=argv,
         extra_env=extra_env,
-        immutable_input_digests=jdk.immutable_input_digests,
-        append_only_caches=jdk.append_only_caches,
+        immutable_input_digests=setup.jdk.immutable_input_digests,
+        append_only_caches=setup.jdk.append_only_caches,
         # run_in_workspace=True allows the REPL to see live file changes in the workspace.
         # Source files are loaded from workspace via "." in classpath.
         run_in_workspace=True,

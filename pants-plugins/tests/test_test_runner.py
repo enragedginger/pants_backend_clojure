@@ -11,8 +11,8 @@ from clojure_backend.target_types import (
     ClojureTestTarget,
 )
 from clojure_backend.target_types import rules as target_types_rules
-from clojure_backend.clj_test_runner import ClojureTestFieldSet, ClojureTestRequest
-from clojure_backend.clj_test_runner import rules as test_runner_rules
+from clojure_backend.goals.test import ClojureTestFieldSet, ClojureTestRequest
+from clojure_backend.goals.test import rules as test_runner_rules
 from clojure_backend import compile_clj
 from pants.backend.java.target_types import JavaSourcesGeneratorTarget
 from pants.core.goals.test import TestResult

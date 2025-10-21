@@ -2,16 +2,18 @@
 
 from clojure_backend import (
     aot_compile,
-    clj_fmt,
-    clj_lint,
-    clj_repl,
-    clj_test_runner,
     compile_clj,
     dependency_inference,
-    generate_deps_edn,
-    package_clojure_deploy_jar,
 )
-from clojure_backend.goals import check
+from clojure_backend.goals import (
+    check,
+    fmt,
+    generate_deps,
+    lint,
+    package,
+    repl,
+    test,
+)
 from clojure_backend.target_types import (
     ClojureDeployJarTarget,
     ClojureSourceTarget,
@@ -39,12 +41,12 @@ def rules():
         *target_type_rules(),
         *compile_clj.rules(),
         *aot_compile.rules(),
-        *package_clojure_deploy_jar.rules(),
-        *clj_fmt.rules(),
-        *clj_lint.rules(),
-        *clj_test_runner.rules(),
-        *clj_repl.rules(),
+        *package.rules(),
+        *fmt.rules(),
+        *lint.rules(),
+        *test.rules(),
+        *repl.rules(),
         *dependency_inference.rules(),
-        *generate_deps_edn.rules(),
+        *generate_deps.rules(),
         *check.rules(),
     ]

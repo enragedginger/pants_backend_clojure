@@ -4,8 +4,8 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.clj_lint import CljKondoRequest
-from clojure_backend.clj_lint import rules as lint_rules
+from clojure_backend.goals.lint import CljKondoRequest
+from clojure_backend.goals.lint import rules as lint_rules
 from clojure_backend.target_types import (
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,

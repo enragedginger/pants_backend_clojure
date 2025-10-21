@@ -4,8 +4,8 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.clj_fmt import CljfmtRequest
-from clojure_backend.clj_fmt import rules as fmt_rules
+from clojure_backend.goals.fmt import CljfmtRequest
+from clojure_backend.goals.fmt import rules as fmt_rules
 from clojure_backend.target_types import (
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,

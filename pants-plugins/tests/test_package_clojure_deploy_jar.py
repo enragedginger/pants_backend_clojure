@@ -8,11 +8,11 @@ import pytest
 
 from clojure_backend.aot_compile import rules as aot_compile_rules
 from clojure_backend import compile_clj
-from clojure_backend.package_clojure_deploy_jar import (
+from clojure_backend.goals.package import (
     ClojureDeployJarFieldSet,
     package_clojure_deploy_jar,
 )
-from clojure_backend.package_clojure_deploy_jar import rules as package_rules
+from clojure_backend.goals.package import rules as package_rules
 from clojure_backend.target_types import (
     ClojureAOTNamespacesField,
     ClojureDeployJarTarget,

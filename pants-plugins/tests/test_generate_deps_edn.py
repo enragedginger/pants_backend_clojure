@@ -4,14 +4,14 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.generate_deps_edn import (
+from clojure_backend.goals.generate_deps import (
     GenerateDepsEdn,
     LockFileEntry,
     format_deps_edn,
     format_deps_edn_deps,
     parse_lock_file,
 )
-from clojure_backend.generate_deps_edn import rules as generate_deps_edn_rules
+from clojure_backend.goals.generate_deps import rules as generate_deps_edn_rules
 from clojure_backend.target_types import (
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,
@@ -264,7 +264,7 @@ def test_format_deps_edn_deps_sorting() -> None:
 
 def test_format_deps_edn_complete() -> None:
     """Test formatting a complete deps.edn file."""
-    from clojure_backend.generate_deps_edn import ClojureSourcesInfo
+    from clojure_backend.goals.generate_deps import ClojureSourcesInfo
 
     sources_info = ClojureSourcesInfo(
         source_paths={"projects/foo/src", "projects/bar/src"},
@@ -304,7 +304,7 @@ def test_format_deps_edn_complete() -> None:
 
 def test_format_deps_edn_no_test_paths() -> None:
     """Test formatting deps.edn when there are no test paths."""
-    from clojure_backend.generate_deps_edn import ClojureSourcesInfo
+    from clojure_backend.goals.generate_deps import ClojureSourcesInfo
 
     sources_info = ClojureSourcesInfo(
         source_paths={"src"},
@@ -324,7 +324,7 @@ def test_format_deps_edn_no_test_paths() -> None:
 
 def test_format_deps_edn_no_source_paths() -> None:
     """Test formatting deps.edn when there are no source paths."""
-    from clojure_backend.generate_deps_edn import ClojureSourcesInfo
+    from clojure_backend.goals.generate_deps import ClojureSourcesInfo
 
     sources_info = ClojureSourcesInfo(
         source_paths=set(),

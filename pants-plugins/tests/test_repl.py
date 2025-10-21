@@ -4,8 +4,8 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.clj_repl import ClojureNRepl, ClojureRebelRepl, ClojureRepl
-from clojure_backend.clj_repl import rules as repl_rules
+from clojure_backend.goals.repl import ClojureNRepl, ClojureRebelRepl, ClojureRepl
+from clojure_backend.goals.repl import rules as repl_rules
 from clojure_backend.target_types import (
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,
