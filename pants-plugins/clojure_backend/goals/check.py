@@ -25,7 +25,7 @@ from pants.util.logging import LogLevel
 from clojure_backend.config import DEFAULT_CLOJURE_VERSION
 from clojure_backend.subsystems.clojure_check import ClojureCheckSubsystem
 from clojure_backend.target_types import ClojureSourceField
-from clojure_backend.utils.namespace_parser import parse_namespace
+from clojure_backend.utils.namespace_parser import parse_namespace, path_to_namespace
 
 
 @dataclass(frozen=True)
@@ -144,6 +144,12 @@ async def check_clojure_field_set(
     for file_content in digest_contents:
         content = file_content.content.decode('utf-8')
         namespace = parse_namespace(content)
+
+        # If parsing fails, infer namespace from file path
+        # This handles files with syntax errors that prevent parsing
+        if not namespace:
+            namespace = path_to_namespace(file_content.path)
+
         if namespace:
             namespaces.append(namespace)
 
