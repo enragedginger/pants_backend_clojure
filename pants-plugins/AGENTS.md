@@ -1,0 +1,1 @@
+After making changes to this folder that you think are complete, verify that nothing broke by running `pants test pants-plugins/::`
