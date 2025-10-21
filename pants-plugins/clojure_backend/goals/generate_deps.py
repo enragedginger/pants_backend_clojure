@@ -103,7 +103,17 @@ def parse_lock_file(lock_content: str) -> list[LockFileEntry]:
     try:
         lock_data = tomllib.loads(lock_content)
     except tomllib.TOMLDecodeError as e:
-        raise ValueError(f"Failed to parse lock file: {e}")
+        raise ValueError(
+            f"Failed to parse lock file: {e}\n\n"
+            f"Common causes:\n"
+            f"  - Invalid TOML syntax in lock file\n"
+            f"  - Corrupted or manually edited lock file\n"
+            f"  - Lock file format version mismatch\n\n"
+            f"Troubleshooting:\n"
+            f"  1. Regenerate the lock file: pants generate-lockfiles\n"
+            f"  2. Check for manual edits to the lock file\n"
+            f"  3. Verify lock file is valid TOML format\n"
+        )
 
     entries = []
     for entry in lock_data.get("entries", []):

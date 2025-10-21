@@ -20,6 +20,11 @@ from __future__ import annotations
 import re
 
 # Namespace declaration pattern
+# Pattern explanation:
+#   \(ns      - Literal "(ns" to match namespace declaration
+#   \s+       - One or more whitespace characters
+#   ([\w\.\-]+) - Capture group: word chars, dots, and hyphens (namespace name)
+# Note: This simple pattern may match (ns ...) in comments or strings
 NS_PATTERN = re.compile(r'\(ns\s+([\w\.\-]+)', re.MULTILINE)
 
 
@@ -36,9 +41,25 @@ def parse_namespace(source_content: str) -> str | None:
         (ns example.project-a.core) -> "example.project-a.core"
 
     Limitations:
-        - Uses regex, may not handle all edge cases
-        - Assumes namespace declaration is outside strings/comments
+        This function uses regex patterns for parsing, which works well for
+        standard cases but has known limitations:
+
+        - May match (ns ...) patterns in comments or strings before the real namespace
+        - Does not strip comments before parsing (e.g., ;; (ns fake) will match)
+        - Does not handle reader conditionals (#?(:clj ...)) specially
         - Does not validate s-expression structure
+        - Assumes namespace follows standard naming (letters, numbers, dots, hyphens)
+        - May not handle metadata (^:deprecated) correctly
+
+        Known edge cases that may cause issues:
+        - Multi-line docstrings containing "(ns fake.namespace)"
+        - Commented-out namespace declarations
+        - Complex reader conditional forms
+
+        For production use with complex codebases requiring perfect accuracy,
+        consider using clojure.tools.reader or a proper s-expression parser.
+
+        See tests/test_namespace_parser_edge_cases.py for documented limitations.
     """
     match = NS_PATTERN.search(source_content)
     return match.group(1) if match else None
@@ -62,12 +83,34 @@ def parse_requires(source_content: str) -> set[str]:
         Returns: {"example.bar", "example.baz", "example.qux"}
 
     Limitations:
-        - Only finds namespaces that contain at least one dot
-        - May miss some edge cases with complex reader conditionals
+        This function uses regex patterns for parsing :require and :use forms.
+
+        Known limitations:
+        - Only finds namespaces that contain at least one dot (filters single-word requires)
+        - May miss prefix list notation: (:require [example [bar] [baz]])
+        - Reader conditionals (#?(:clj ...)) may confuse the parser
+        - Does not handle all complex multi-line forms correctly
+        - Does not strip comments or strings before parsing
+        - Assumes standard formatting with square brackets
+
+        Unsupported edge cases:
+        - Prefix list notation for grouped requires
+        - Some complex reader conditional patterns
+        - Requires within macros or nested forms
+
+        For most typical Clojure code, this parser works correctly.
+        See tests/test_namespace_parser_edge_cases.py for documented limitations.
     """
     required_namespaces = set()
 
     # Find the ns form - it starts with (ns and ends with a matching paren
+    # Pattern explanation:
+    #   \(ns      - Literal "(ns"
+    #   \s+       - One or more whitespace
+    #   [\w\.\-]+ - Namespace name (word chars, dots, hyphens)
+    #   \s*       - Optional whitespace
+    #   (.*?)     - Non-greedy capture of ns body
+    #   (?=\n\(|\Z) - Lookahead for newline+paren or end of string
     ns_match = re.search(r'\(ns\s+[\w\.\-]+\s*(.*?)(?=\n\(|\Z)', source_content, re.DOTALL)
     if not ns_match:
         return required_namespaces
@@ -75,6 +118,11 @@ def parse_requires(source_content: str) -> set[str]:
     ns_body = ns_match.group(1)
 
     # Find :require and :use sections - look for (:require ...) and (:use ...)
+    # Pattern explanation:
+    #   \({directive}  - Literal "(:require" or "(:use"
+    #   \s+            - One or more whitespace
+    #   (.*?)          - Non-greedy capture of directive body
+    #   (?=\(:|$)      - Lookahead for next directive "(:..." or end
     for directive in [':require', ':use']:
         directive_match = re.search(rf'\({directive}\s+(.*?)(?=\(:|$)', ns_body, re.DOTALL)
         if not directive_match:
@@ -84,9 +132,13 @@ def parse_requires(source_content: str) -> set[str]:
 
         # Extract namespaces - they appear at the start of [namespace ...] forms
         # Match patterns like [example.foo ...] or [example.bar]
+        # Pattern explanation:
+        #   \[            - Literal opening bracket
+        #   ([a-zA-Z][\w\.\-]*) - Capture: starts with letter, then word chars/dots/hyphens
         for match in re.finditer(r'\[([a-zA-Z][\w\.\-]*)', directive_body):
             namespace = match.group(1)
             # Only include if it looks like a namespace (has a dot)
+            # This filters out single-word requires like [clojure] which are rare
             if '.' in namespace:
                 required_namespaces.add(namespace)
 
@@ -116,6 +168,26 @@ def parse_imports(source_content: str) -> set[str]:
               (:import java.util.Date
                        java.io.File))
             Returns: {"java.util.Date", "java.io.File"}
+
+    Limitations:
+        This function uses regex patterns for parsing :import forms.
+
+        Known limitations:
+        - Does not validate that class names are valid Java identifiers
+        - Reader conditionals (#?(:clj ...)) may confuse the parser
+        - Does not handle all whitespace variations perfectly
+        - Does not strip comments before parsing
+        - Assumes class names start with uppercase letters
+
+        Supported features:
+        - Vector syntax with package and class list
+        - Single fully-qualified class names
+        - Inner classes (Map$Entry)
+        - Deeply nested packages (java.util.concurrent.atomic.*)
+        - Mixed syntax in same :import form
+
+        For typical Clojure/Java interop code, this parser works correctly.
+        See tests/test_namespace_parser_edge_cases.py for edge case behavior.
     """
     imported_classes = set()
 

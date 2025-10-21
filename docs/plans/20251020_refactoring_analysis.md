@@ -1059,16 +1059,16 @@ pants-plugins/
 - [x] Update all imports
 
 ### Phase 2: Core Refactoring (Week 3-4)
-- [ ] Refactor dependency inference duplication
-- [ ] Extract common REPL setup logic
-- [ ] Fix resolve filtering logic
-- [ ] Reorganize goals directory
+- [x] Refactor dependency inference duplication
+- [x] Extract common REPL setup logic
+- [x] Fix resolve filtering logic
+- [x] Reorganize goals directory
 
 ### Phase 3: Enhancements (Week 5-6)
-- [ ] Parallelize check goal
-- [ ] Enhance error messages
-- [ ] Add test coverage for parsing edge cases
-- [ ] Document regex limitations
+- [x] Parallelize check goal
+- [x] Enhance error messages
+- [x] Add test coverage for parsing edge cases
+- [x] Document regex limitations
 
 ### Phase 4: Features (Future)
 - [ ] Enhanced check goal features

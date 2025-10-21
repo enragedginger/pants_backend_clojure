@@ -44,6 +44,13 @@ class ClojureCheckRequest(CheckRequest):
     tool_name = "Clojure check"
 
 
+@dataclass(frozen=True)
+class ClojureCheckFieldSetRequest:
+    """Request to check a single Clojure field set."""
+
+    field_set: ClojureCheckFieldSet
+
+
 
 
 def _create_loader_script(namespaces: list[str], config: ClojureCheckSubsystem) -> str:
@@ -91,114 +98,130 @@ def _create_loader_script(namespaces: list[str], config: ClojureCheckSubsystem) 
 '''
 
 
+@rule(desc="Check single Clojure field set", level=LogLevel.DEBUG)
+async def check_clojure_field_set(
+    request: ClojureCheckFieldSetRequest,
+    jvm: JvmSubsystem,
+    clojure_check: ClojureCheckSubsystem,
+) -> CheckResult:
+    """Check a single Clojure field set by loading its namespaces."""
+
+    field_set = request.field_set
+
+    # Get JDK and classpath for this target
+    jdk_request = JdkRequest.from_field(field_set.jdk_version)
+
+    # Fetch Clojure runtime (needed for namespace loading)
+    clojure_artifact = ArtifactRequirement(
+        coordinate=Coordinate(
+            group="org.clojure",
+            artifact="clojure",
+            version=DEFAULT_CLOJURE_VERSION,
+        )
+    )
+
+    jdk, clspath, clojure_classpath = await MultiGet(
+        Get(JdkEnvironment, JdkRequest, jdk_request),
+        classpath(**implicitly(Addresses([field_set.address]))),
+        Get(
+            ToolClasspath,
+            ToolClasspathRequest(
+                artifact_requirements=ArtifactRequirements([clojure_artifact]),
+            ),
+        ),
+    )
+
+    # Get source files and extract namespaces
+    sources = await Get(SourceFiles, SourceFilesRequest([field_set.sources]))
+
+    # Strip source roots so files are at proper paths for Clojure's namespace resolution
+    stripped_sources = await Get(StrippedSourceFiles, SourceFiles, sources)
+
+    # Read the file contents to extract namespaces
+    digest_contents = await Get(DigestContents, Digest, sources.snapshot.digest)
+
+    namespaces = []
+    for file_content in digest_contents:
+        content = file_content.content.decode('utf-8')
+        namespace = parse_namespace(content)
+        if namespace:
+            namespaces.append(namespace)
+
+    if not namespaces:
+        # No namespaces to check, return success
+        return CheckResult(
+            exit_code=0,
+            stdout="No namespaces to check",
+            stderr="",
+            partition_description=str(field_set.address),
+        )
+
+    # Create loader script
+    loader_script = _create_loader_script(namespaces, clojure_check)
+
+    # Prepare digest with the loader script
+    loader_digest = await Get(
+        Digest,
+        CreateDigest([FileContent("check_loader.clj", loader_script.encode())]),
+    )
+
+    # Merge loader script with sources and classpath digests
+    input_digest = await Get(
+        Digest,
+        MergeDigests([
+            loader_digest,
+            stripped_sources.snapshot.digest,
+            *clspath.digests(),
+            clojure_classpath.digest,
+        ])
+    )
+
+    # Build JVM command with additional args if provided
+    extra_jvm_args = list(clojure_check.args) if clojure_check.args else []
+
+    # Build classpath: current directory (for sources) + dependencies + Clojure runtime
+    classpath_entries = [
+        ".",
+        *clspath.args(),
+        *clojure_classpath.classpath_entries(),
+    ]
+
+    # Create JVM process to run the check
+    jvm_process = JvmProcess(
+        jdk=jdk,
+        classpath_entries=classpath_entries,
+        argv=["clojure.main", "check_loader.clj"],
+        input_digest=input_digest,
+        description=f"Check Clojure compilation: {field_set.address}",
+        level=LogLevel.DEBUG,
+        extra_jvm_options=extra_jvm_args,
+    )
+
+    result = await Get(FallibleProcessResult, Process, await Get(Process, JvmProcess, jvm_process))
+
+    return CheckResult(
+        exit_code=result.exit_code,
+        stdout=result.stdout.decode(),
+        stderr=result.stderr.decode(),
+        partition_description=str(field_set.address),
+    )
+
+
 @rule(desc="Check Clojure compilation", level=LogLevel.DEBUG)
 async def check_clojure(
     request: ClojureCheckRequest,
-    jvm: JvmSubsystem,
     clojure_check: ClojureCheckSubsystem,
 ) -> CheckResults:
-    """Validate Clojure sources by loading all namespaces."""
+    """Validate Clojure sources by loading all namespaces in parallel."""
 
     if clojure_check.skip:
         return CheckResults([], checker_name="Clojure check")
 
-    results = []
-
-    for field_set in request.field_sets:
-        # Get JDK and classpath for this target
-        jdk_request = JdkRequest.from_field(field_set.jdk_version)
-
-        # Fetch Clojure runtime (needed for namespace loading)
-        clojure_artifact = ArtifactRequirement(
-            coordinate=Coordinate(
-                group="org.clojure",
-                artifact="clojure",
-                version=DEFAULT_CLOJURE_VERSION,
-            )
-        )
-
-        jdk, clspath, clojure_classpath = await MultiGet(
-            Get(JdkEnvironment, JdkRequest, jdk_request),
-            classpath(**implicitly(Addresses([field_set.address]))),
-            Get(
-                ToolClasspath,
-                ToolClasspathRequest(
-                    artifact_requirements=ArtifactRequirements([clojure_artifact]),
-                ),
-            ),
-        )
-
-        # Get source files and extract namespaces
-        sources = await Get(SourceFiles, SourceFilesRequest([field_set.sources]))
-
-        # Strip source roots so files are at proper paths for Clojure's namespace resolution
-        stripped_sources = await Get(StrippedSourceFiles, SourceFiles, sources)
-
-        # Read the file contents to extract namespaces
-        digest_contents = await Get(DigestContents, Digest, sources.snapshot.digest)
-
-        namespaces = []
-        for file_content in digest_contents:
-            content = file_content.content.decode('utf-8')
-            namespace = parse_namespace(content)
-            if namespace:
-                namespaces.append(namespace)
-
-        if not namespaces:
-            # No namespaces to check, skip this target
-            continue
-
-        # Create loader script
-        loader_script = _create_loader_script(namespaces, clojure_check)
-
-        # Prepare digest with the loader script
-        loader_digest = await Get(
-            Digest,
-            CreateDigest([FileContent("check_loader.clj", loader_script.encode())]),
-        )
-
-        # Merge loader script with sources and classpath digests
-        input_digest = await Get(
-            Digest,
-            MergeDigests([
-                loader_digest,
-                stripped_sources.snapshot.digest,
-                *clspath.digests(),
-                clojure_classpath.digest,
-            ])
-        )
-
-        # Build JVM command with additional args if provided
-        extra_jvm_args = list(clojure_check.args) if clojure_check.args else []
-
-        # Build classpath: current directory (for sources) + dependencies + Clojure runtime
-        classpath_entries = [
-            ".",
-            *clspath.args(),
-            *clojure_classpath.classpath_entries(),
-        ]
-
-        # Create JVM process to run the check
-        jvm_process = JvmProcess(
-            jdk=jdk,
-            classpath_entries=classpath_entries,
-            argv=["clojure.main", "check_loader.clj"],
-            input_digest=input_digest,
-            description=f"Check Clojure compilation: {field_set.address}",
-            level=LogLevel.DEBUG,
-            extra_jvm_options=extra_jvm_args,
-        )
-
-        result = await Get(FallibleProcessResult, Process, await Get(Process, JvmProcess, jvm_process))
-
-        results.append(
-            CheckResult(
-                exit_code=result.exit_code,
-                stdout=result.stdout.decode(),
-                stderr=result.stderr.decode(),
-                partition_description=str(field_set.address),
-            )
-        )
+    # Process all field sets in parallel using MultiGet
+    results = await MultiGet(
+        Get(CheckResult, ClojureCheckFieldSetRequest(field_set))
+        for field_set in request.field_sets
+    )
 
     return CheckResults(results, checker_name="Clojure check")
 

@@ -180,11 +180,26 @@ async def aot_compile_clojure(
     process_result = await Get(FallibleProcessResult, Process, await Get(Process, JvmProcess, process))
 
     if process_result.exit_code != 0:
-        raise Exception(
-            f"AOT compilation failed for namespaces {request.namespaces}:\n"
-            f"stdout:\n{process_result.stdout.decode('utf-8')}\n"
-            f"stderr:\n{process_result.stderr.decode('utf-8')}"
+        stdout = process_result.stdout.decode('utf-8')
+        stderr = process_result.stderr.decode('utf-8')
+
+        # Build helpful error message with troubleshooting hints
+        error_message = (
+            f"AOT compilation failed for namespaces {', '.join(request.namespaces)}.\n\n"
+            f"Common causes:\n"
+            f"  - Syntax errors in namespace code\n"
+            f"  - Missing dependencies\n"
+            f"  - Circular namespace dependencies\n"
+            f"  - Missing (:gen-class) for main namespace\n"
+            f"  - Java interop types not on classpath\n\n"
+            f"Stdout:\n{stdout}\n\n"
+            f"Stderr:\n{stderr}\n\n"
+            f"Troubleshooting:\n"
+            f"  1. Check the namespace compiles: pants check {request.source_addresses}\n"
+            f"  2. Verify dependencies: pants dependencies {request.source_addresses}\n"
+            f"  3. Try compiling directly with Clojure CLI if available\n"
         )
+        raise Exception(error_message)
 
     # Extract the compiled classes from the output
     # The process captures everything in the classes_dir

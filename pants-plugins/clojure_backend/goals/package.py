@@ -138,8 +138,15 @@ async def package_clojure_deploy_jar(
 
     if not main_source_file:
         raise ValueError(
-            f"Could not find source file for main namespace '{main_namespace}'. "
-            f"Make sure the namespace is defined in the dependencies."
+            f"Could not find source file for main namespace '{main_namespace}'.\n\n"
+            f"Common causes:\n"
+            f"  - Main namespace is not in the dependencies of this target\n"
+            f"  - Namespace name doesn't match the file path\n"
+            f"  - Missing (ns {main_namespace}) declaration in source file\n\n"
+            f"Troubleshooting:\n"
+            f"  1. Verify dependencies: pants dependencies {field_set.address}\n"
+            f"  2. Check file contains (ns {main_namespace}) declaration\n"
+            f"  3. Ensure the namespace follows Clojure naming conventions\n"
         )
 
     # Check for (:gen-class) in the namespace declaration

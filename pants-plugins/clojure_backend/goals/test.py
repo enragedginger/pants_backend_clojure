@@ -100,7 +100,18 @@ async def setup_clojure_test_for_target(
     content = digest_contents[0].content.decode("utf-8")
     match = re.search(r"\(ns\s+([a-z0-9\-_.]+)", content, re.MULTILINE)
     if not match:
-        raise ValueError(f"Could not find namespace declaration in {test_file_path}")
+        raise ValueError(
+            f"Could not find namespace declaration in {test_file_path}.\n\n"
+            f"Common causes:\n"
+            f"  - Missing or malformed (ns ...) declaration\n"
+            f"  - Namespace declaration not at the top of the file\n"
+            f"  - Invalid characters in namespace name\n\n"
+            f"Expected format: (ns my-namespace-name)\n\n"
+            f"Troubleshooting:\n"
+            f"  1. Ensure the file starts with a valid (ns ...) form\n"
+            f"  2. Check for syntax errors: pants check {field_set.address}\n"
+            f"  3. Verify namespace follows Clojure naming conventions\n"
+        )
     test_namespace = match.group(1)
 
     # Get all source files (both production and test code)
