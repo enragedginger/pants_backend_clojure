@@ -12,27 +12,15 @@ which properly handles all edge cases including:
 - Complex nested forms
 - Prefix list notation
 - Metadata on namespace forms
-
-Falls back to regex-based parsing if clj-kondo is not available.
 """
 
 from __future__ import annotations
-
-import re
 
 from clojure_backend.utils.clj_kondo_parser import (
     parse_namespace_with_kondo,
     parse_requires_with_kondo,
     parse_imports_with_kondo,
 )
-
-# Namespace declaration pattern
-# Pattern explanation:
-#   \(ns      - Literal "(ns" to match namespace declaration
-#   \s+       - One or more whitespace characters
-#   ([\w\.\-]+) - Capture group: word chars, dots, and hyphens (namespace name)
-# Note: This simple pattern may match (ns ...) in comments or strings
-NS_PATTERN = re.compile(r'\(ns\s+([\w\.\-]+)', re.MULTILINE)
 
 
 def parse_namespace(source_content: str) -> str | None:
@@ -54,17 +42,8 @@ def parse_namespace(source_content: str) -> str | None:
     - Reader conditionals (#?(:clj ...))
     - Metadata (^:deprecated)
     - Complex nested forms
-
-    Falls back to regex parsing if clj-kondo is not available.
     """
-    # Try clj-kondo first for accurate parsing
-    result = parse_namespace_with_kondo(source_content)
-    if result is not None:
-        return result
-
-    # Fallback to regex if clj-kondo is not available or fails
-    match = NS_PATTERN.search(source_content)
-    return match.group(1) if match else None
+    return parse_namespace_with_kondo(source_content)
 
 
 def parse_requires(source_content: str) -> set[str]:
@@ -91,40 +70,8 @@ def parse_requires(source_content: str) -> set[str]:
     - Complex multi-line forms
     - Comments within require forms
     - All :refer, :as, :refer-macros options
-
-    Falls back to regex parsing if clj-kondo is not available.
     """
-    # Try clj-kondo first for accurate parsing
-    result = parse_requires_with_kondo(source_content)
-    if result:
-        return result
-
-    # Fallback to regex if clj-kondo is not available or fails
-    required_namespaces = set()
-
-    # Find the ns form - it starts with (ns and ends with a matching paren
-    ns_match = re.search(r'\(ns\s+[\w\.\-]+\s*(.*?)(?=\n\(|\Z)', source_content, re.DOTALL)
-    if not ns_match:
-        return required_namespaces
-
-    ns_body = ns_match.group(1)
-
-    # Find :require and :use sections
-    for directive in [':require', ':use']:
-        directive_match = re.search(rf'\({directive}\s+(.*?)(?=\(:|$)', ns_body, re.DOTALL)
-        if not directive_match:
-            continue
-
-        directive_body = directive_match.group(1)
-
-        # Extract namespaces
-        for match in re.finditer(r'\[([a-zA-Z][\w\.\-]*)', directive_body):
-            namespace = match.group(1)
-            # Only include if it looks like a namespace (has a dot)
-            if '.' in namespace:
-                required_namespaces.add(namespace)
-
-    return required_namespaces
+    return parse_requires_with_kondo(source_content)
 
 
 def parse_imports(source_content: str) -> set[str]:
@@ -158,46 +105,8 @@ def parse_imports(source_content: str) -> set[str]:
     - Reader conditionals
     - Comments within import forms
     - All whitespace variations
-
-    Falls back to regex parsing if clj-kondo is not available.
     """
-    # Try clj-kondo first for accurate parsing
-    result = parse_imports_with_kondo(source_content)
-    if result:
-        return result
-
-    # Fallback to regex if clj-kondo is not available or fails
-    imported_classes = set()
-
-    # Find the ns form
-    ns_match = re.search(r'\(ns\s+[\w\.\-]+\s*(.*?)(?=\n\(|\Z)', source_content, re.DOTALL)
-    if not ns_match:
-        return imported_classes
-
-    ns_body = ns_match.group(1)
-
-    # Find :import section
-    import_match = re.search(r'\(:import\s+(.*?)(?=\(:|$)', ns_body, re.DOTALL)
-    if not import_match:
-        return imported_classes
-
-    import_body = import_match.group(1)
-
-    # Handle vector syntax: [java.util Date ArrayList]
-    for match in re.finditer(r'\[([a-zA-Z][\w\.]*)\s+([^\]]+)\]', import_body):
-        package = match.group(1)
-        classes_str = match.group(2)
-        class_names = classes_str.split()
-        for class_name in class_names:
-            if re.match(r'^[A-Z][\w\$]*$', class_name):
-                imported_classes.add(f"{package}.{class_name}")
-
-    # Handle single-class syntax: java.util.Date
-    for match in re.finditer(r'\b([a-z][\w]*(?:\.[a-z][\w]*)+\.[A-Z][\w\$]*)\b', import_body):
-        class_name = match.group(1)
-        imported_classes.add(class_name)
-
-    return imported_classes
+    return parse_imports_with_kondo(source_content)
 
 
 def namespace_to_path(namespace: str) -> str:
