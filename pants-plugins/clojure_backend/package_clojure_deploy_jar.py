@@ -35,7 +35,6 @@ from clojure_backend.aot_compile import (
     CompileClojureAOTRequest,
     CompiledClojureClasses,
 )
-from clojure_backend.dependency_inference import parse_clojure_namespace
 from clojure_backend.target_types import (
     ClojureAOTNamespacesField,
     ClojureDeployJarTarget,
@@ -43,6 +42,7 @@ from clojure_backend.target_types import (
     ClojureSourceField,
     ClojureTestSourceField,
 )
+from clojure_backend.utils.namespace_parser import parse_namespace
 
 
 @dataclass(frozen=True)
@@ -116,7 +116,7 @@ async def package_clojure_deploy_jar(
         namespaces = []
         for file_content in digest_contents:
             content = file_content.content.decode("utf-8")
-            namespace = parse_clojure_namespace(content)
+            namespace = parse_namespace(content)
             if namespace:
                 namespaces.append(namespace)
         namespaces_to_compile = tuple(sorted(set(namespaces)))
@@ -131,7 +131,7 @@ async def package_clojure_deploy_jar(
     main_source_file = None
     for file_content in digest_contents:
         content = file_content.content.decode("utf-8")
-        namespace = parse_clojure_namespace(content)
+        namespace = parse_namespace(content)
         if namespace == main_namespace:
             main_source_file = content
             break

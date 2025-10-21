@@ -22,13 +22,10 @@ from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmJdkField, JvmResolveField
 from pants.util.logging import LogLevel
 
-from clojure_backend.dependency_inference import parse_clojure_namespace
+from clojure_backend.config import DEFAULT_CLOJURE_VERSION
 from clojure_backend.subsystems.clojure_check import ClojureCheckSubsystem
 from clojure_backend.target_types import ClojureSourceField
-
-
-# Default Clojure version to use for checking
-DEFAULT_CLOJURE_VERSION = "1.11.1"
+from clojure_backend.utils.namespace_parser import parse_namespace
 
 
 @dataclass(frozen=True)
@@ -143,7 +140,7 @@ async def check_clojure(
         namespaces = []
         for file_content in digest_contents:
             content = file_content.content.decode('utf-8')
-            namespace = parse_clojure_namespace(content)
+            namespace = parse_namespace(content)
             if namespace:
                 namespaces.append(namespace)
 

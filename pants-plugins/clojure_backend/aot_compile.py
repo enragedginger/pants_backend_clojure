@@ -18,11 +18,8 @@ from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
 from pants.jvm.target_types import JvmJdkField, JvmResolveField
 from pants.util.logging import LogLevel
 
+from clojure_backend.config import DEFAULT_CLOJURE_VERSION
 from clojure_backend.target_types import ClojureSourceField, ClojureTestSourceField
-
-
-# Default Clojure version to use for AOT compilation
-DEFAULT_CLOJURE_VERSION = "1.11.1"
 
 
 @dataclass(frozen=True)

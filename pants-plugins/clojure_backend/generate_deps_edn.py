@@ -24,13 +24,14 @@ from pants.jvm.target_types import JvmResolveField
 from pants.option.option_types import StrOption
 from pants.util.logging import LogLevel
 
-from clojure_backend.dependency_inference import parse_clojure_namespace
 from clojure_backend.target_types import (
     ClojureSourceField,
     ClojureSourceTarget,
     ClojureTestSourceField,
     ClojureTestTarget,
 )
+from clojure_backend.utils.namespace_parser import parse_namespace
+from clojure_backend.utils.source_roots import determine_source_root as _determine_source_root
 
 
 class GenerateDepsEdnSubsystem(GoalSubsystem):
@@ -146,12 +147,9 @@ def determine_source_root(target: Target, source_field, source_content: str) -> 
 
     Returns None if the namespace can't be parsed.
     """
-    namespace = parse_clojure_namespace(source_content)
+    namespace = parse_namespace(source_content)
     if not namespace:
         return None
-
-    # Convert namespace to expected path (example.core -> example/core.clj)
-    expected_path_parts = namespace.replace(".", "/").replace("-", "_").split("/")
 
     # Get the actual file path
     source_file = target.address.spec_path
@@ -160,24 +158,8 @@ def determine_source_root(target: Target, source_field, source_content: str) -> 
         if source_field.value:
             source_file = str(PurePath(target.address.spec_path) / source_field.value[0])
 
-    # Remove .clj/.cljc extension
-    if source_file.endswith(".clj"):
-        source_file = source_file[:-4]
-    elif source_file.endswith(".cljc"):
-        source_file = source_file[:-5]
-
-    # Walk backwards from the file path, matching namespace components
-    path_parts = source_file.split("/")
-
-    # Find where the namespace path starts in the file path
-    # e.g., projects/foo/src/example/core matches example/core at the end
-    for i in range(len(path_parts) - len(expected_path_parts), -1, -1):
-        if path_parts[i:] == expected_path_parts:
-            # Source root is everything before the namespace path
-            return "/".join(path_parts[:i]) if i > 0 else "."
-
-    # Fallback: use the directory containing the source file
-    return target.address.spec_path or "."
+    # Use the shared utility function
+    return _determine_source_root(source_file, namespace)
 
 
 @dataclass(frozen=True)

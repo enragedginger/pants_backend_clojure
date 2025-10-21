@@ -2,10 +2,10 @@
 
 import pytest
 
-from clojure_backend.dependency_inference import (
-    parse_clojure_namespace,
-    parse_clojure_requires,
-    parse_clojure_imports,
+from clojure_backend.utils.namespace_parser import (
+    parse_namespace as parse_clojure_namespace,
+    parse_requires as parse_clojure_requires,
+    parse_imports as parse_clojure_imports,
     namespace_to_path,
     path_to_namespace,
     class_to_path,

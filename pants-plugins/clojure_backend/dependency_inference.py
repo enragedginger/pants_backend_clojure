@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-import re
-from collections import defaultdict
 from dataclasses import dataclass
-from pathlib import PurePath
-from typing import DefaultDict
 
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
-from pants.core.util_rules.stripped_source_files import StrippedFileName, StrippedFileNameRequest
 from pants.engine.addresses import Address
 from pants.engine.fs import Digest, DigestContents
 from pants.engine.internals.graph import Owners, OwnersRequest
@@ -21,12 +16,11 @@ from pants.engine.target import (
     FieldSet,
     InferDependenciesRequest,
     InferredDependencies,
-    Targets,
 )
 from pants.engine.unions import UnionRule
 from pants.jvm.dependency_inference.symbol_mapper import SymbolMapping
 from pants.jvm.subsystems import JvmSubsystem
-from pants.jvm.target_types import JvmResolveField
+from pants.jvm.target_types import JvmDependenciesField, JvmResolveField
 from pants.util.frozendict import FrozenDict
 from pants.util.logging import LogLevel
 from pants.util.ordered_set import OrderedSet
@@ -37,182 +31,12 @@ from clojure_backend.target_types import (
     ClojureTestSourceField,
     ClojureTestTarget,
 )
-from pants.jvm.target_types import JvmDependenciesField
-
-
-# Regex patterns for parsing Clojure namespace declarations and requires
-NS_PATTERN = re.compile(r'\(ns\s+([\w\.\-]+)', re.MULTILINE)
-
-
-def parse_clojure_namespace(source_content: str) -> str | None:
-    """Extract the namespace from a Clojure source file.
-
-    Example:
-        (ns example.project-a.core) -> "example.project-a.core"
-    """
-    match = NS_PATTERN.search(source_content)
-    return match.group(1) if match else None
-
-
-def parse_clojure_requires(source_content: str) -> set[str]:
-    """Extract required namespaces from a Clojure source file.
-
-    Handles both :require and :use forms.
-
-    Examples:
-        (ns example.foo
-          (:require [example.bar :as bar]
-                    [example.baz])
-          (:use [example.qux]))
-
-        Returns: {"example.bar", "example.baz", "example.qux"}
-    """
-    required_namespaces = set()
-
-    # Find the ns form - it starts with (ns and ends with a matching paren
-    ns_match = re.search(r'\(ns\s+[\w\.\-]+\s*(.*?)(?=\n\(|\Z)', source_content, re.DOTALL)
-    if not ns_match:
-        return required_namespaces
-
-    ns_body = ns_match.group(1)
-
-    # Find :require and :use sections - look for (:require ...) and (:use ...)
-    for directive in [':require', ':use']:
-        directive_match = re.search(rf'\({directive}\s+(.*?)(?=\(:|$)', ns_body, re.DOTALL)
-        if not directive_match:
-            continue
-
-        directive_body = directive_match.group(1)
-
-        # Extract namespaces - they appear at the start of [namespace ...] forms
-        # Match patterns like [example.foo ...] or [example.bar]
-        for match in re.finditer(r'\[([a-zA-Z][\w\.\-]*)', directive_body):
-            namespace = match.group(1)
-            # Only include if it looks like a namespace (has a dot)
-            if '.' in namespace:
-                required_namespaces.add(namespace)
-
-    return required_namespaces
-
-
-def parse_clojure_imports(source_content: str) -> set[str]:
-    """Extract Java class imports from :import forms.
-
-    Handles both vector and single-class import syntax.
-
-    Examples:
-        (ns example.foo
-          (:import [java.util Date ArrayList]
-                   [java.io File]))
-
-        Returns: {"java.util.Date", "java.util.ArrayList", "java.io.File"}
-
-        (ns example.bar
-          (:import java.util.Date
-                   java.io.File))
-
-        Returns: {"java.util.Date", "java.io.File"}
-    """
-    imported_classes = set()
-
-    # Find the ns form
-    ns_match = re.search(r'\(ns\s+[\w\.\-]+\s*(.*?)(?=\n\(|\Z)', source_content, re.DOTALL)
-    if not ns_match:
-        return imported_classes
-
-    ns_body = ns_match.group(1)
-
-    # Find :import section
-    import_match = re.search(r'\(:import\s+(.*?)(?=\(:|$)', ns_body, re.DOTALL)
-    if not import_match:
-        return imported_classes
-
-    import_body = import_match.group(1)
-
-    # Handle vector syntax: [java.util Date ArrayList]
-    # Match [package Class1 Class2 ...]
-    for match in re.finditer(r'\[([a-zA-Z][\w\.]*)\s+([^\]]+)\]', import_body):
-        package = match.group(1)
-        classes_str = match.group(2)
-        # Split on whitespace to get individual class names
-        class_names = classes_str.split()
-        for class_name in class_names:
-            # Only include valid class names (start with letter, no special chars except _)
-            if re.match(r'^[A-Z][\w\$]*$', class_name):
-                imported_classes.add(f"{package}.{class_name}")
-
-    # Handle single-class syntax: java.util.Date
-    # Match fully-qualified class names (package.Class)
-    # Must have at least one dot and end with uppercase letter (class name)
-    for match in re.finditer(r'\b([a-z][\w]*(?:\.[a-z][\w]*)+\.[A-Z][\w\$]*)\b', import_body):
-        class_name = match.group(1)
-        # Avoid matching things inside vector forms (already handled above)
-        imported_classes.add(class_name)
-
-    return imported_classes
-
-
-def class_to_path(class_name: str) -> str:
-    """Convert a Java class name to its expected file path.
-
-    Examples:
-        "com.example.Foo" -> "com/example/Foo.java"
-        "java.util.HashMap" -> "java/util/HashMap.java"
-        "java.util.Map$Entry" -> "java/util/Map.java" (inner class)
-
-    Note: Inner classes (containing $) are mapped to their outer class file.
-    """
-    # Handle inner classes by taking only the outer class
-    if '$' in class_name:
-        class_name = class_name.split('$')[0]
-
-    path = class_name.replace('.', '/')
-    return f"{path}.java"
-
-
-def is_jdk_class(class_name: str) -> bool:
-    """Check if a class is part of the JDK (implicit dependency).
-
-    JDK packages include:
-    - java.* (java.lang, java.util, java.io, etc.)
-    - javax.* (javax.swing, javax.sql, etc.)
-    - sun.* (internal, discouraged but sometimes used)
-    - jdk.* (JDK 9+ modules)
-    """
-    jdk_prefixes = ("java.", "javax.", "sun.", "jdk.")
-    return any(class_name.startswith(prefix) for prefix in jdk_prefixes)
-
-
-def namespace_to_path(namespace: str) -> str:
-    """Convert a Clojure namespace to its expected file path.
-
-    Example:
-        "example.project-a.core" -> "example/project_a/core.clj"
-
-    Note: Clojure uses underscores in file paths for hyphens in namespaces.
-    """
-    path = namespace.replace('.', '/').replace('-', '_')
-    return f"{path}.clj"
-
-
-def path_to_namespace(file_path: str) -> str:
-    """Convert a file path to a Clojure namespace.
-
-    Example:
-        "example/project_a/core.clj" -> "example.project-a.core"
-
-    Note: Clojure uses hyphens in namespaces for underscores in file paths.
-    """
-    # Remove .clj or .cljc extension
-    path = file_path
-    if path.endswith('.clj'):
-        path = path[:-4]
-    elif path.endswith('.cljc'):
-        path = path[:-5]
-
-    # Convert path separators to dots and underscores to hyphens
-    namespace = path.replace('/', '.').replace('_', '-')
-    return namespace
+from clojure_backend.utils.namespace_parser import (
+    is_jdk_class,
+    namespace_to_path,
+    parse_imports,
+    parse_requires,
+)
 
 
 @dataclass(frozen=True)
@@ -286,8 +110,8 @@ async def infer_clojure_source_dependencies(
     source_content = digest_contents[0].content.decode('utf-8')
 
     # Parse required Clojure namespaces and imported Java classes
-    required_namespaces = parse_clojure_requires(source_content)
-    imported_classes = parse_clojure_imports(source_content)
+    required_namespaces = parse_requires(source_content)
+    imported_classes = parse_imports(source_content)
 
     # Convert namespaces to potential file paths and find owners
     dependencies: OrderedSet[Address] = OrderedSet()
@@ -385,8 +209,8 @@ async def infer_clojure_test_dependencies(
     source_content = digest_contents[0].content.decode('utf-8')
 
     # Parse required Clojure namespaces and imported Java classes
-    required_namespaces = parse_clojure_requires(source_content)
-    imported_classes = parse_clojure_imports(source_content)
+    required_namespaces = parse_requires(source_content)
+    imported_classes = parse_imports(source_content)
 
     # Convert namespaces to potential file paths and find owners
     dependencies: OrderedSet[Address] = OrderedSet()

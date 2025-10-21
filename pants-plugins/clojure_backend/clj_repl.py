@@ -8,6 +8,8 @@ from clojure_backend.target_types import (
     ClojureTestSourceField,
     ClojureTestTarget,
 )
+from clojure_backend.utils.namespace_parser import parse_namespace
+from clojure_backend.utils.source_roots import determine_source_root
 from pants.core.goals.repl import ReplImplementation, ReplRequest
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.core.util_rules.system_binaries import BashBinary
@@ -162,44 +164,11 @@ async def _get_all_clojure_targets_in_resolve(
     return tuple(targets_in_resolve)
 
 
-def _determine_source_root(file_path: str, namespace: str) -> str | None:
-    """Determine the source root directory for a Clojure file.
-
-    For a file like projects/example/project-a/src/example/project_a/core.clj
-    with namespace example.project-a.core, the source root is projects/example/project-a/src.
-
-    Returns None if the namespace can't be matched to the file path.
-    """
-    # Convert namespace to expected path (example.project-a.core -> example/project_a/core.clj)
-    expected_path_parts = namespace.replace(".", "/").replace("-", "_").split("/")
-
-    # Remove .clj/.cljc extension from file path
-    clean_path = file_path
-    if clean_path.endswith(".clj"):
-        clean_path = clean_path[:-4]
-    elif clean_path.endswith(".cljc"):
-        clean_path = clean_path[:-5]
-
-    # Split the file path into parts
-    path_parts = clean_path.split("/")
-
-    # Find where the namespace path starts in the file path
-    # e.g., projects/example/project-a/src/example/project_a/core matches example/project_a/core at the end
-    for i in range(len(path_parts) - len(expected_path_parts), -1, -1):
-        if path_parts[i:] == expected_path_parts:
-            # Source root is everything before the namespace path
-            return "/".join(path_parts[:i]) if i > 0 else "."
-
-    # Fallback: use the directory containing the source file
-    return "/".join(file_path.split("/")[:-1]) if "/" in file_path else "."
-
-
 async def _gather_source_roots(addresses: Addresses) -> set[str]:
     """Gather all source root directories for the given addresses.
 
     Returns a set of source root paths that should be added to the classpath.
     """
-    from clojure_backend.dependency_inference import parse_clojure_namespace
 
     transitive_targets = await Get(TransitiveTargets, TransitiveTargetsRequest(addresses))
     source_roots = set()
@@ -240,11 +209,11 @@ async def _gather_source_roots(addresses: Addresses) -> set[str]:
 
         # Parse first file's namespace
         file_content = digest_contents[0].content.decode("utf-8")
-        namespace = parse_clojure_namespace(file_content)
+        namespace = parse_namespace(file_content)
 
         if namespace:
             file_path = digest_contents[0].path
-            source_root = _determine_source_root(file_path, namespace)
+            source_root = determine_source_root(file_path, namespace)
             if source_root:
                 source_roots.add(source_root)
         else:
