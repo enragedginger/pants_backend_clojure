@@ -36,8 +36,7 @@ def test_parse_namespace_with_multiline_string_containing_ns():
 def test_parse_namespace_with_comment_containing_ns():
     """Test that comments containing '(ns' don't interfere.
 
-    KNOWN LIMITATION: The regex parser doesn't strip comments first,
-    so it may match (ns ...) patterns in comments before the real namespace.
+    The clj-kondo parser correctly strips comments and finds the real namespace.
     """
     source = '''
     ;; This comment has (ns commented.out) but shouldn't match
@@ -47,9 +46,8 @@ def test_parse_namespace_with_comment_containing_ns():
     (defn bar [])
     '''
     result = parse_namespace(source)
-    # Due to the limitation, this currently matches the commented version
-    # Ideally would be "example.actual" but is "commented.out"
-    assert result == "commented.out"  # Documents current behavior
+    # The clj-kondo parser correctly finds the actual namespace, not the commented one
+    assert result == "example.actual"
 
 
 def test_parse_namespace_with_reader_conditional():
@@ -64,14 +62,16 @@ def test_parse_namespace_with_reader_conditional():
 
 
 def test_parse_namespace_with_metadata():
-    """Test namespace with metadata."""
+    """Test namespace with metadata.
+
+    The clj-kondo parser correctly handles metadata on namespace forms.
+    """
     source = '''(ns ^:deprecated example.with-metadata
       "A namespace with metadata")
     '''
     result = parse_namespace(source)
-    # Note: Current regex may not handle metadata correctly
-    # This test documents the expected behavior
-    assert result in ["example.with-metadata", None]
+    # The clj-kondo parser correctly handles metadata
+    assert result == "example.with-metadata"
 
 
 def test_parse_namespace_with_underscores():
@@ -340,10 +340,9 @@ def test_parse_requires_with_many_namespaces():
 
 
 def test_known_limitation_string_with_ns():
-    """Documents known limitation: strings containing (ns ...) may cause issues.
+    """Tests that strings containing (ns ...) don't cause false matches.
 
-    This test exists to document a known limitation of the regex-based parser.
-    If this test fails, the parser has likely been improved.
+    The clj-kondo parser correctly handles this edge case.
     """
     # A tricky case: docstring before ns declaration
     source = '''
@@ -352,23 +351,19 @@ def test_known_limitation_string_with_ns():
     (ns example.real)
     '''
     result = parse_namespace(source)
-    # Current implementation may find "fake.namespace" instead of "example.real"
-    # This is a known limitation
-    # If the parser is improved, this test should be updated
-    assert result is not None  # Should find *something*
-    # Ideally should be "example.real" but may be "fake.namespace"
+    # The clj-kondo parser correctly finds the real namespace
+    assert result == "example.real"
 
 
 def test_known_limitation_commented_ns():
-    """Documents known limitation: comments are not stripped before parsing.
+    """Tests that comment reader macros (#_) don't interfere with parsing.
 
-    The regex parser doesn't strip comments first, so commented-out ns
-    declarations might interfere.
+    The clj-kondo parser correctly handles comment reader macros.
     """
     source = '''
     #_(ns commented.out)
     (ns example.real)
     '''
     result = parse_namespace(source)
-    # Should find "example.real", but might find "commented.out"
-    assert result is not None
+    # The clj-kondo parser correctly finds the real namespace
+    assert result == "example.real"
