@@ -2,6 +2,7 @@
 
 from clojure_backend import (
     aot_compile,
+    clojure_symbol_mapping,
     compile_clj,
     dependency_inference,
 )
@@ -49,4 +50,5 @@ def rules():
         *dependency_inference.rules(),
         *generate_deps.rules(),
         *check.rules(),
+        *clojure_symbol_mapping.rules(),
     ]

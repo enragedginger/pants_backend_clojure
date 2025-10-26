@@ -26,6 +26,7 @@ from pants.util.frozendict import FrozenDict
 from pants.util.logging import LogLevel
 from pants.util.ordered_set import OrderedSet
 
+from clojure_backend.clojure_symbol_mapping import ClojureNamespaceMapping
 from clojure_backend.target_types import (
     ClojureSourceField,
     ClojureSourceTarget,
@@ -93,6 +94,7 @@ async def _infer_clojure_dependencies_impl(
     field_set: ClojureSourceDependenciesInferenceFieldSet | ClojureTestDependenciesInferenceFieldSet,
     jvm: JvmSubsystem,
     symbol_mapping: SymbolMapping,
+    clojure_mapping: ClojureNamespaceMapping,
 ) -> InferredDependencies:
     """Shared implementation for inferring dependencies of Clojure files.
 
@@ -103,6 +105,7 @@ async def _infer_clojure_dependencies_impl(
         field_set: The field set for the target being analyzed (source or test)
         jvm: JVM subsystem for resolve information
         symbol_mapping: Mapping for resolving Java class dependencies
+        clojure_mapping: Mapping for resolving third-party Clojure namespace dependencies
 
     Returns:
         InferredDependencies containing all resolved dependencies
@@ -129,6 +132,10 @@ async def _infer_clojure_dependencies_impl(
     my_resolve = field_set.resolve.normalized_value(jvm)
 
     for namespace in required_namespaces:
+        # Strategy: Try first-party sources first, then fall back to third-party mapping
+        # This ensures that local code takes precedence over third-party libraries
+
+        # FIRST: Try first-party sources using OwnersRequest
         # Convert namespace to expected file path
         # e.g., "example.project-a.core" -> "example/project_a/core.clj"
         file_path = namespace_to_path(namespace)
@@ -141,6 +148,7 @@ async def _infer_clojure_dependencies_impl(
             f"**/{file_path}",  # Glob to find anywhere in project
         ]
 
+        found_first_party = False
         for path in possible_paths:
             owners = await Get(Owners, OwnersRequest((path,)))
             if owners:
@@ -170,7 +178,23 @@ async def _infer_clojure_dependencies_impl(
                 maybe_disambiguated = explicitly_provided_deps.disambiguated(candidates)
                 if maybe_disambiguated:
                     dependencies.add(maybe_disambiguated)
+                found_first_party = True
                 break  # Found owners, no need to try other paths
+
+        # SECOND: If no first-party source found, check third-party mapping
+        if not found_first_party:
+            third_party_addrs = clojure_mapping.addresses_for_namespace(namespace, my_resolve)
+            if third_party_addrs:
+                # Found in third-party mapping - apply same disambiguation logic
+                explicitly_provided_deps.maybe_warn_of_ambiguous_dependency_inference(
+                    third_party_addrs,
+                    field_set.address,
+                    import_reference="namespace",
+                    context=f"The target {field_set.address} requires `{namespace}`",
+                )
+                maybe_disambiguated = explicitly_provided_deps.disambiguated(third_party_addrs)
+                if maybe_disambiguated:
+                    dependencies.add(maybe_disambiguated)
 
     # Handle Java class imports using SymbolMapping
     for class_name in imported_classes:
@@ -202,9 +226,10 @@ async def infer_clojure_source_dependencies(
     request: InferClojureSourceDependencies,
     jvm: JvmSubsystem,
     symbol_mapping: SymbolMapping,
+    clojure_mapping: ClojureNamespaceMapping,
 ) -> InferredDependencies:
     """Infer dependencies for a Clojure source file by analyzing its :require and :import forms."""
-    return await _infer_clojure_dependencies_impl(request.field_set, jvm, symbol_mapping)
+    return await _infer_clojure_dependencies_impl(request.field_set, jvm, symbol_mapping, clojure_mapping)
 
 
 @rule(desc="Infer Clojure test dependencies", level=LogLevel.DEBUG)
@@ -212,9 +237,10 @@ async def infer_clojure_test_dependencies(
     request: InferClojureTestDependencies,
     jvm: JvmSubsystem,
     symbol_mapping: SymbolMapping,
+    clojure_mapping: ClojureNamespaceMapping,
 ) -> InferredDependencies:
     """Infer dependencies for a Clojure test file by analyzing its :require and :import forms."""
-    return await _infer_clojure_dependencies_impl(request.field_set, jvm, symbol_mapping)
+    return await _infer_clojure_dependencies_impl(request.field_set, jvm, symbol_mapping, clojure_mapping)
 
 
 def rules():
