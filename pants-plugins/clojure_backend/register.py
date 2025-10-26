@@ -9,6 +9,7 @@ from clojure_backend import (
 from clojure_backend.goals import (
     check,
     fmt,
+    generate_clojure_lockfile_metadata,
     generate_deps,
     lint,
     package,
@@ -51,4 +52,5 @@ def rules():
         *generate_deps.rules(),
         *check.rules(),
         *clojure_symbol_mapping.rules(),
+        *generate_clojure_lockfile_metadata.rules(),
     ]
