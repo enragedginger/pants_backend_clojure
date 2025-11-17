@@ -1,5 +1,5 @@
 [GLOBAL]
-pants_version = "2.28.0"
+pants_version = "2.29.1"
 process_execution_local_enable_nailgun = false
 pythonpath = ["%(buildroot)s/pants-plugins"]
 backend_packages = [
@@ -30,6 +30,7 @@ repos = [
   "https://maven-central.storage-download.googleapis.com/maven2",
   "https://repo1.maven.org/maven2",
 ]
+
 
 [jvm.resolves]
 java17 = "locks/jvm/java17.lock.jsonc"

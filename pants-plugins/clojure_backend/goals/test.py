@@ -29,8 +29,8 @@ from pants.engine.process import (
     InteractiveProcess,
     Process,
     ProcessCacheScope,
+    ProcessResultWithRetries,
     ProcessWithRetries,
-    execute_process_with_retry,
 )
 from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import FieldSet, SourcesField, TransitiveTargets, TransitiveTargetsRequest
@@ -82,10 +82,14 @@ async def setup_clojure_test_for_target(
     jdk_request = JdkRequest.from_field(request.field_set.jdk_version)
     transitive_targets_request = TransitiveTargetsRequest([request.field_set.address])
 
-    jdk, transitive_targets, classpath = await MultiGet(
+    jdk, transitive_targets = await MultiGet(
         Get(JdkEnvironment, JdkRequest, jdk_request),
         Get(TransitiveTargets, TransitiveTargetsRequest, transitive_targets_request),
-        classpath_get(**implicitly(Addresses([request.field_set.address]))),
+    )
+
+    # Get classpath for all transitive dependencies, not just the test target
+    classpath = await classpath_get(
+        **implicitly(Addresses(tgt.address for tgt in transitive_targets.closure))
     )
 
     # Get test source file to parse namespace
@@ -199,8 +203,9 @@ async def run_clojure_test(
     process = await Get(Process, JvmProcess, test_setup.process)
 
     # Execute with retry support
-    process_results = await execute_process_with_retry(
-        ProcessWithRetries(process, test_subsystem.attempts_default)
+    process_results = await Get(
+        ProcessResultWithRetries,
+        ProcessWithRetries(process, test_subsystem.attempts_default),
     )
 
     return TestResult.from_fallible_process_result(
