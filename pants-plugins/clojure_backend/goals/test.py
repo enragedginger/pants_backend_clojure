@@ -82,14 +82,10 @@ async def setup_clojure_test_for_target(
     jdk_request = JdkRequest.from_field(request.field_set.jdk_version)
     transitive_targets_request = TransitiveTargetsRequest([request.field_set.address])
 
-    jdk, transitive_targets = await MultiGet(
+    jdk, transitive_targets, classpath = await MultiGet(
         Get(JdkEnvironment, JdkRequest, jdk_request),
         Get(TransitiveTargets, TransitiveTargetsRequest, transitive_targets_request),
-    )
-
-    # Get classpath for all transitive dependencies, not just the test target
-    classpath = await classpath_get(
-        **implicitly(Addresses(tgt.address for tgt in transitive_targets.closure))
+        classpath_get(**implicitly(Addresses([request.field_set.address]))),
     )
 
     # Get test source file to parse namespace

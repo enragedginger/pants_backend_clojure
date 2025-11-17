@@ -12,7 +12,7 @@ from pants.engine.fs import CreateDigest, Digest, DigestContents, FileContent, M
 from pants.engine.internals.selectors import Get, MultiGet
 from pants.engine.process import FallibleProcessResult, Process, ProcessResult
 from pants.engine.rules import collect_rules, implicitly, rule
-from pants.engine.target import FieldSet, TransitiveTargets, TransitiveTargetsRequest
+from pants.engine.target import FieldSet
 from pants.engine.unions import UnionRule
 from pants.jvm.classpath import Classpath, classpath
 from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest, JvmProcess
@@ -120,15 +120,9 @@ async def check_clojure_field_set(
         )
     )
 
-    # Get transitive targets to include all dependencies on classpath
-    transitive_targets = await Get(
-        TransitiveTargets,
-        TransitiveTargetsRequest([field_set.address]),
-    )
-
     jdk, clspath, clojure_classpath = await MultiGet(
         Get(JdkEnvironment, JdkRequest, jdk_request),
-        classpath(**implicitly(Addresses(tgt.address for tgt in transitive_targets.closure))),
+        classpath(**implicitly(Addresses([field_set.address]))),
         Get(
             ToolClasspath,
             ToolClasspathRequest(

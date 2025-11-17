@@ -16,11 +16,9 @@ from pants.core.util_rules.partitions import (
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.engine.addresses import Addresses
 from pants.engine.fs import Digest, MergeDigests
-from pants.engine.internals.selectors import MultiGet
 from pants.engine.platform import Platform
 from pants.engine.process import FallibleProcessResult, Process
 from pants.engine.rules import collect_rules, Get, implicitly, rule
-from pants.engine.target import TransitiveTargets, TransitiveTargetsRequest
 from pants.jvm.classpath import classpath as classpath_get
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmResolveField
@@ -116,21 +114,10 @@ async def clj_kondo_lint(
 
     if clj_kondo.use_classpath and request.elements:
         # Collect all addresses in this batch
-        batch_addresses = [element.address for element in request.elements]
+        addresses = Addresses(element.address for element in request.elements)
 
-        # Get transitive targets for all targets in this batch to include all dependencies
-        all_transitive_targets = await MultiGet(
-            Get(TransitiveTargets, TransitiveTargetsRequest([addr]))
-            for addr in batch_addresses
-        )
-
-        # Combine all transitive addresses (deduplicated)
-        all_addresses = set()
-        for transitive_targets in all_transitive_targets:
-            all_addresses.update(tgt.address for tgt in transitive_targets.closure)
-
-        # Get classpath for all transitive dependencies
-        classpath = await classpath_get(**implicitly(Addresses(all_addresses)))
+        # Get classpath for these targets (automatically includes transitive dependencies)
+        classpath = await classpath_get(**implicitly({addresses: Addresses}))
 
         # Include classpath JARs in the input digest so clj-kondo can use them for
         # symbol resolution via its cache, but don't pass them to --lint since we
