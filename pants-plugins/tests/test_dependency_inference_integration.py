@@ -281,6 +281,13 @@ def test_infer_transitive_clojure_dependencies(rule_runner: RuleRunner) -> None:
                     artifact="timbre",
                     version="6.3.1",
                 )
+
+                jvm_artifact(
+                    name="com.taoensso_encore",
+                    group="com.taoensso",
+                    artifact="encore",
+                    version="3.132.0",
+                )
                 """
             ),
             "3rdparty/jvm/default.lock": dedent(
@@ -293,6 +300,7 @@ def test_infer_transitive_clojure_dependencies(rule_runner: RuleRunner) -> None:
                 # {
                 #   "version": 1,
                 #   "generated_with_requirements": [
+                #     "com.taoensso:encore:3.132.0,url=not_provided,jar=not_provided",
                 #     "com.taoensso:timbre:6.3.1,url=not_provided,jar=not_provided",
                 #     "org.clojure:clojure:1.12.0,url=not_provided,jar=not_provided"
                 #   ]
@@ -300,23 +308,23 @@ def test_infer_transitive_clojure_dependencies(rule_runner: RuleRunner) -> None:
                 # --- END PANTS LOCKFILE METADATA ---
 
                 [[entries]]
-                file_name = "com.taoensso_encore_3.68.0.jar"
+                file_name = "com.taoensso_encore_3.132.0.jar"
                 [[entries.directDependencies]]
                 group = "com.taoensso"
                 artifact = "truss"
-                version = "1.11.0"
+                version = "1.12.0"
                 packaging = "jar"
 
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "tools.reader"
-                version = "1.3.6"
+                version = "1.5.0"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "com.taoensso"
                 artifact = "truss"
-                version = "1.11.0"
+                version = "1.12.0"
                 packaging = "jar"
 
                 [[entries.dependencies]]
@@ -328,24 +336,24 @@ def test_infer_transitive_clojure_dependencies(rule_runner: RuleRunner) -> None:
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "tools.reader"
-                version = "1.3.6"
+                version = "1.5.0"
                 packaging = "jar"
 
 
                 [entries.coord]
                 group = "com.taoensso"
                 artifact = "encore"
-                version = "3.68.0"
+                version = "3.132.0"
                 packaging = "jar"
                 [entries.file_digest]
-                fingerprint = "e23b3955bdc1199cafb678974d16f9386354b896da1b58e87e97273f50adabc4"
-                serialized_bytes_length = 87527
+                fingerprint = "0fbedbc65316d5af67d108fd2d76a352185efb530f9eb410bf8357b9c79cee7e"
+                serialized_bytes_length = 131401
                 [[entries]]
                 file_name = "com.taoensso_timbre_6.3.1.jar"
                 [[entries.directDependencies]]
                 group = "com.taoensso"
                 artifact = "encore"
-                version = "3.68.0"
+                version = "3.132.0"
                 packaging = "jar"
 
                 [[entries.directDependencies]]
@@ -357,13 +365,7 @@ def test_infer_transitive_clojure_dependencies(rule_runner: RuleRunner) -> None:
                 [[entries.dependencies]]
                 group = "com.taoensso"
                 artifact = "encore"
-                version = "3.68.0"
-                packaging = "jar"
-
-                [[entries.dependencies]]
-                group = "com.taoensso"
-                artifact = "truss"
-                version = "1.11.0"
+                version = "3.132.0"
                 packaging = "jar"
 
                 [[entries.dependencies]]
@@ -376,12 +378,6 @@ def test_infer_transitive_clojure_dependencies(rule_runner: RuleRunner) -> None:
                 group = "org.clojure"
                 artifact = "clojure"
                 version = "1.12.0"
-                packaging = "jar"
-
-                [[entries.dependencies]]
-                group = "org.clojure"
-                artifact = "tools.reader"
-                version = "1.3.6"
                 packaging = "jar"
 
 
@@ -396,16 +392,16 @@ def test_infer_transitive_clojure_dependencies(rule_runner: RuleRunner) -> None:
                 [[entries]]
                 directDependencies = []
                 dependencies = []
-                file_name = "com.taoensso_truss_1.11.0.jar"
+                file_name = "com.taoensso_truss_1.12.0.jar"
 
                 [entries.coord]
                 group = "com.taoensso"
                 artifact = "truss"
-                version = "1.11.0"
+                version = "1.12.0"
                 packaging = "jar"
                 [entries.file_digest]
-                fingerprint = "679a9061ab365424add9e6ae6c973f4989f58fe563a3266674968dcdc856b89b"
-                serialized_bytes_length = 17637
+                fingerprint = "010b82784ef592d1d103bcf335d151d6721b195b40bbc52d38bd1c3edd857252"
+                serialized_bytes_length = 17124
                 [[entries]]
                 file_name = "io.aviso_pretty_1.4.4.jar"
                 [[entries.directDependencies]]
@@ -511,7 +507,7 @@ def test_infer_transitive_clojure_dependencies(rule_runner: RuleRunner) -> None:
                 fingerprint = "94cd99b6ea639641f37af4860a643b6ed399ee5a8be5d717cff0b663c8d75077"
                 serialized_bytes_length = 636643
                 [[entries]]
-                file_name = "org.clojure_tools.reader_1.3.6.jar"
+                file_name = "org.clojure_tools.reader_1.5.0.jar"
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
@@ -528,11 +524,11 @@ def test_infer_transitive_clojure_dependencies(rule_runner: RuleRunner) -> None:
                 [entries.coord]
                 group = "org.clojure"
                 artifact = "tools.reader"
-                version = "1.3.6"
+                version = "1.5.0"
                 packaging = "jar"
                 [entries.file_digest]
-                fingerprint = "11d1b31f2c65c3355b292bb9b44b8fcafda54b44da63e34ab97b79a8ab3bb8e0"
-                serialized_bytes_length = 52544
+                fingerprint = "bfc8f709efb843f2ccc4daa93e2842ceb86e7b8d11d5544dc0ee68b6a0f4db3c"
+                serialized_bytes_length = 52618
                 """
             ),
             "BUILD": dedent(
