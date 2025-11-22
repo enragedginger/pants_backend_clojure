@@ -37,7 +37,10 @@ class CljKondo(ExternalTool):
             "If true, Pants will search for configuration files "
             "(.clj-kondo/config.edn) in the workspace and include them "
             "in the sandbox when running clj-kondo. This allows clj-kondo "
-            "to respect project-specific linter configurations."
+            "to respect project-specific linter configurations.\n\n"
+            "Note: You must tell Pants to include the `.clj-kondo` directory by "
+            'adding `"!/.clj-kondo/"` to `[GLOBAL].pants_ignore.add` in your '
+            "`pants.toml`, since Pants ignores dotfile directories by default."
         ),
     )
 

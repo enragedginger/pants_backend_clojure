@@ -42,6 +42,10 @@ class Cljfmt(ExternalTool):
             "\n\n"
             "cljfmt will search for configuration files in the current directory and parent "
             "directories, allowing you to have project-wide or directory-specific formatting rules."
+            "\n\n"
+            "Note: If using dotfile configs (.cljfmt.edn or .cljfmt.clj), you may need to tell "
+            "Pants to include them by adding the appropriate pattern to `[GLOBAL].pants_ignore.add` "
+            "in your `pants.toml`, since Pants ignores dotfiles by default."
         ),
     )
 
