@@ -14,6 +14,7 @@ from pants.engine.target import (
     FieldSet,
     MultipleSourcesField,
     SingleSourceField,
+    SpecialCasedDependencies,
     StringField,
     StringSequenceField,
     Target,
@@ -248,6 +249,30 @@ class ClojureAOTNamespacesField(StringSequenceField):
     default = ()  # Empty = main namespace only (transitive)
 
 
+class ClojureCompileDependenciesField(SpecialCasedDependencies):
+    alias = "compile_dependencies"
+    help = (
+        "Dependencies that are needed for compilation but should be excluded from the final JAR.\n\n"
+        "This is similar to Maven's 'provided' scope - dependencies in this field will be available "
+        "during AOT compilation, but they (and all their transitive dependencies) will be excluded "
+        "from the packaged JAR.\n\n"
+        "Important: Dependencies listed here MUST also appear in the regular 'dependencies' field. "
+        "The 'compile_dependencies' field marks which dependencies should be excluded from the JAR, "
+        "while the 'dependencies' field makes them available for compilation and dependency resolution.\n\n"
+        "Common use cases:\n"
+        "- Servlet APIs or application server libraries that will be provided at runtime\n"
+        "- Platform-specific dependencies that are available in the deployment environment\n"
+        "- Dependencies that should not be bundled to avoid classpath conflicts\n\n"
+        "Example:\n"
+        "  clojure_deploy_jar(\n"
+        "      name='app',\n"
+        "      main='my.app.core',\n"
+        "      dependencies=[':servlet-api', ':my-lib'],  # All deps for compilation\n"
+        "      compile_dependencies=[':servlet-api'],      # Exclude from JAR\n"
+        "  )"
+    )
+
+
 class ClojureDeployJarTarget(Target):
     alias = "clojure_deploy_jar"
     core_fields = (
@@ -255,6 +280,7 @@ class ClojureDeployJarTarget(Target):
         JvmDependenciesField,
         ClojureMainNamespaceField,
         ClojureAOTNamespacesField,
+        ClojureCompileDependenciesField,
         JvmResolveField,
         JvmJdkField,
         OutputPathField,

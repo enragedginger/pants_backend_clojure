@@ -37,6 +37,7 @@ from clojure_backend.aot_compile import (
 )
 from clojure_backend.target_types import (
     ClojureAOTNamespacesField,
+    ClojureCompileDependenciesField,
     ClojureDeployJarTarget,
     ClojureMainNamespaceField,
     ClojureSourceField,
@@ -56,6 +57,7 @@ class ClojureDeployJarFieldSet(PackageFieldSet):
 
     main: ClojureMainNamespaceField
     aot: ClojureAOTNamespacesField
+    compile_dependencies: ClojureCompileDependenciesField
     jdk: JvmJdkField
     resolve: JvmResolveField
     output_path: OutputPathField

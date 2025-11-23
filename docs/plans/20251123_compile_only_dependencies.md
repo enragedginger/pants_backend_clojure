@@ -106,9 +106,11 @@ Create a new target type `clojure_compile_dependency` that wraps `jvm_artifact` 
 
 ## Implementation Plan
 
-### Phase 1: Add Compile Dependencies Field
+### Phase 1: Add Compile Dependencies Field ✅ COMPLETE
 
 **Goal**: Add new field to `clojure_deploy_jar` target and validate it works.
+
+**Implementation Note**: Uses `SpecialCasedDependencies` as base class (superior to generic `Dependencies`) to prevent interference with normal transitive dependency resolution.
 
 **Files to modify**:
 1. `pants-plugins/clojure_backend/target_types.py`

@@ -15,6 +15,7 @@ from clojure_backend.goals.package import (
 from clojure_backend.goals.package import rules as package_rules
 from clojure_backend.target_types import (
     ClojureAOTNamespacesField,
+    ClojureCompileDependenciesField,
     ClojureDeployJarTarget,
     ClojureMainNamespaceField,
     ClojureSourceTarget,
@@ -268,6 +269,7 @@ def test_clojure_deploy_jar_target_has_required_fields() -> None:
     assert "main" in field_aliases
     assert "aot" in field_aliases
     assert "dependencies" in field_aliases
+    assert "compile_dependencies" in field_aliases
     assert "resolve" in field_aliases
 
 
@@ -397,3 +399,65 @@ def test_package_deploy_jar_with_transitive_dependencies(rule_runner: RuleRunner
     # Should compile successfully with transitive dependencies
     result = rule_runner.request(BuiltPackage, [field_set])
     assert len(result.artifacts) == 1
+
+
+def test_compile_dependencies_field_can_be_parsed(rule_runner: RuleRunner) -> None:
+    """Test that compile_dependencies field can be parsed and accessed."""
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": "{}",
+            "src/lib/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="provided",
+                    source="provided.clj",
+                )
+                """
+            ),
+            "src/lib/provided.clj": dedent(
+                """\
+                (ns lib.provided)
+
+                (defn api-fn []
+                  "provided API")
+                """
+            ),
+            "src/myapp/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["//src/lib:provided"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="myapp.core",
+                    dependencies=[":core", "//src/lib:provided"],
+                    compile_dependencies=["//src/lib:provided"],
+                )
+                """
+            ),
+            "src/myapp/core.clj": dedent(
+                """\
+                (ns myapp.core
+                  (:require [lib.provided])
+                  (:gen-class))
+
+                (defn -main [& args]
+                  (println (lib.provided/api-fn)))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/myapp", target_name="app"))
+
+    # Verify the field exists and can be accessed
+    assert target.has_field(ClojureCompileDependenciesField)
+    compile_deps_field = target[ClojureCompileDependenciesField]
+    assert compile_deps_field.value is not None
+
+    # Create field set
+    field_set = ClojureDeployJarFieldSet.create(target)
+    assert field_set.compile_dependencies is not None
