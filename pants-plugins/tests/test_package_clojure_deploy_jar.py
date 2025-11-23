@@ -8,6 +8,7 @@ import pytest
 
 from clojure_backend.aot_compile import rules as aot_compile_rules
 from clojure_backend import compile_clj
+from clojure_backend.compile_dependencies import rules as compile_dependencies_rules
 from clojure_backend.goals.package import (
     ClojureDeployJarFieldSet,
     package_clojure_deploy_jar,
@@ -24,6 +25,7 @@ from clojure_backend.target_types import rules as target_types_rules
 from pants.build_graph.address import Address
 from pants.core.goals.package import BuiltPackage
 from pants.core.util_rules import source_files, stripped_source_files
+from pants.engine.fs import DigestContents
 from pants.engine.internals.scheduler import ExecutionError
 from pants.engine.rules import QueryRule
 from pants.jvm import classpath, jvm_common
@@ -38,6 +40,7 @@ def rule_runner() -> RuleRunner:
         rules=[
             *package_rules(),
             *aot_compile_rules(),
+            *compile_dependencies_rules(),
             *classpath.rules(),
             *compile_clj.rules(),
             *target_types_rules(),
@@ -461,3 +464,111 @@ def test_compile_dependencies_field_can_be_parsed(rule_runner: RuleRunner) -> No
     # Create field set
     field_set = ClojureDeployJarFieldSet.create(target)
     assert field_set.compile_dependencies is not None
+
+
+def test_compile_dependencies_excluded_from_jar(rule_runner: RuleRunner) -> None:
+    """Test that compile_dependencies are excluded from the final JAR."""
+    import zipfile
+
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": "{}",
+            "src/api/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="interface",
+                    source="interface.clj",
+                )
+                """
+            ),
+            "src/api/interface.clj": dedent(
+                """\
+                (ns api.interface)
+
+                (defn do-something []
+                  "API function")
+                """
+            ),
+            "src/lib/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="util",
+                    source="util.clj",
+                )
+                """
+            ),
+            "src/lib/util.clj": dedent(
+                """\
+                (ns lib.util)
+
+                (defn helper []
+                  "utility function")
+                """
+            ),
+            "src/app/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["//src/api:interface", "//src/lib:util"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="app.core",
+                    dependencies=[":core", "//src/api:interface", "//src/lib:util"],
+                    compile_dependencies=["//src/api:interface"],
+                )
+                """
+            ),
+            "src/app/core.clj": dedent(
+                """\
+                (ns app.core
+                  (:require [api.interface]
+                            [lib.util])
+                  (:gen-class))
+
+                (defn -main [& args]
+                  (println (lib.util/helper))
+                  (println (api.interface/do-something)))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/app", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    # Package the JAR
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+    # Read the JAR and check its contents
+    jar_path = result.artifacts[0].relpath
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None, f"Could not find JAR file {jar_path} in digest"
+
+    # Parse the JAR and check what classes are included
+    import io
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        jar_entries = set(jar.namelist())
+
+    # The main app classes should be present
+    assert any('app/core' in entry for entry in jar_entries), \
+        "Main app.core classes should be in JAR"
+
+    # The runtime dependency (lib.util) classes should be present
+    assert any('lib/util' in entry for entry in jar_entries), \
+        "Runtime dependency lib.util classes should be in JAR"
+
+    # The compile-only dependency (api.interface) classes should NOT be present
+    api_entries = [entry for entry in jar_entries if 'api/interface' in entry]
+    assert len(api_entries) == 0, \
+        f"Compile-only dependency api.interface should NOT be in JAR, but found: {api_entries}"

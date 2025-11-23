@@ -35,6 +35,7 @@ from clojure_backend.aot_compile import (
     CompileClojureAOTRequest,
     CompiledClojureClasses,
 )
+from clojure_backend.compile_dependencies import CompileOnlyDependencies
 from clojure_backend.target_types import (
     ClojureAOTNamespacesField,
     ClojureCompileDependenciesField,
@@ -186,21 +187,36 @@ async def package_clojure_deploy_jar(
         # Default: namespace is the class name
         main_class_name = main_namespace
 
-    # Get source addresses for AOT compilation
-    source_addresses = Addresses(tgt.address for tgt in clojure_source_targets)
-
     # Get JDK request from field
     jdk_request = JdkRequest.from_field(field_set.jdk)
 
-    # Get JDK environment and classpath for dependencies
-    jdk_env, classpath, compiled_classes = await MultiGet(
+    # Get compile-only dependencies to exclude from the JAR
+    compile_only_deps = await Get(
+        CompileOnlyDependencies,
+        ClojureCompileDependenciesField,
+        field_set.compile_dependencies,
+    )
+
+    # Build full address set for AOT compilation (includes everything)
+    all_source_addresses = Addresses(tgt.address for tgt in clojure_source_targets)
+
+    # Build runtime address set for JAR packaging (excludes compile-only and their transitives)
+    runtime_source_addresses = Addresses(
+        addr for addr in all_source_addresses
+        if addr not in compile_only_deps.addresses
+    )
+
+    # Get JDK environment, runtime classpath, and compiled classes
+    # Note: AOT compilation uses ALL addresses (including compile-only)
+    #       JAR packaging uses RUNTIME addresses (excluding compile-only)
+    jdk_env, runtime_classpath, compiled_classes = await MultiGet(
         Get(JdkEnvironment, JdkRequest, jdk_request),
-        Get(Classpath, Addresses, source_addresses),
+        Get(Classpath, Addresses, runtime_source_addresses),
         Get(
             CompiledClojureClasses,
             CompileClojureAOTRequest(
                 namespaces=namespaces_to_compile,
-                source_addresses=source_addresses,
+                source_addresses=all_source_addresses,  # AOT needs all deps
                 jdk=field_set.jdk,
                 resolve=field_set.resolve,
             ),
@@ -212,6 +228,40 @@ async def package_clojure_deploy_jar(
         file_ending="jar",
     )
 
+    # Build set of namespaces for compile-only dependencies to exclude from JAR
+    # Collect all source fields for compile-only targets
+    compile_only_source_fields = []
+    for tgt in clojure_source_targets:
+        if tgt.address in compile_only_deps.addresses:
+            if tgt.has_field(ClojureSourceField):
+                compile_only_source_fields.append(tgt[ClojureSourceField])
+            elif tgt.has_field(ClojureTestSourceField):
+                compile_only_source_fields.append(tgt[ClojureTestSourceField])
+
+    # Get all source files in parallel using MultiGet
+    compile_only_namespaces = set()
+    if compile_only_source_fields:
+        all_source_requests = await MultiGet(
+            Get(SourceFiles, SourceFilesRequest([field]))
+            for field in compile_only_source_fields
+        )
+
+        # Get all source contents in parallel
+        source_digests = [req.snapshot.digest for req in all_source_requests if req.files]
+        if source_digests:
+            all_contents = await MultiGet(
+                Get(DigestContents, Digest, digest)
+                for digest in source_digests
+            )
+
+            # Parse namespaces from all source files
+            for content_result in all_contents:
+                for file_content in content_result:
+                    content = file_content.content.decode("utf-8")
+                    namespace = parse_namespace(content)
+                    if namespace:
+                        compile_only_namespaces.add(namespace)
+
     # Create JAR manifest with main class
     manifest_content = f"""\
 Manifest-Version: 1.0
@@ -220,7 +270,8 @@ Created-By: Pants Build System
 """
 
     # Get the contents of compiled classes and dependency JARs
-    all_digests = [compiled_classes.digest, *classpath.digests()]
+    # Note: Uses runtime_classpath which excludes compile-only dependencies
+    all_digests = [compiled_classes.digest, *runtime_classpath.digests()]
     merged_digest = await Get(Digest, MergeDigests(all_digests))
     digest_contents = await Get(DigestContents, Digest, merged_digest)
 
@@ -254,11 +305,23 @@ Created-By: Pants Build System
                     pass
 
         # Add compiled classes (they're in the classes/ directory)
+        # Exclude classes from compile-only dependencies
         for file_content in digest_contents:
             if file_content.path.startswith('classes/') and file_content.path.endswith('.class'):
                 # Remove 'classes/' prefix to get the archive name
                 arcname = file_content.path[8:]  # len('classes/') == 8
-                if arcname not in added_entries:
+
+                # Check if this class file belongs to a compile-only namespace
+                is_compile_only = False
+                for namespace in compile_only_namespaces:
+                    # Convert namespace to path (e.g., "api.interface" -> "api/interface")
+                    namespace_path = namespace.replace('.', '/').replace('-', '_')
+                    if arcname.startswith(namespace_path):
+                        is_compile_only = True
+                        break
+
+                # Only add if not from a compile-only dependency
+                if not is_compile_only and arcname not in added_entries:
                     jar.writestr(arcname, file_content.content)
                     added_entries.add(arcname)
 
