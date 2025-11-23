@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pants test:*)",
+      "Bash(pants help:*)",
+      "WebFetch(domain:clojure.org)",
+      "Bash(pants list:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
