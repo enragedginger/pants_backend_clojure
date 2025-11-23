@@ -4,6 +4,7 @@ from clojure_backend import (
     aot_compile,
     clojure_symbol_mapping,
     compile_clj,
+    compile_dependencies,
     dependency_inference,
 )
 from clojure_backend.goals import (
@@ -43,6 +44,7 @@ def rules():
         *target_type_rules(),
         *compile_clj.rules(),
         *aot_compile.rules(),
+        *compile_dependencies.rules(),
         *package.rules(),
         *fmt.rules(),
         *lint.rules(),
