@@ -1,4 +1,4 @@
-"""Tests for compile dependency resolution."""
+"""Tests for provided dependency resolution."""
 
 from __future__ import annotations
 
@@ -6,19 +6,18 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.compile_dependencies import (
-    CompileOnlyDependencies,
-    resolve_compile_only_dependencies,
+from clojure_backend.provided_dependencies import (
+    ProvidedDependencies,
+    resolve_provided_dependencies,
 )
-from clojure_backend.compile_dependencies import rules as compile_dependencies_rules
+from clojure_backend.provided_dependencies import rules as provided_dependencies_rules
 from clojure_backend.target_types import (
-    ClojureCompileDependenciesField,
+    ClojureProvidedDependenciesField,
     ClojureDeployJarTarget,
     ClojureSourceTarget,
 )
 from clojure_backend.target_types import rules as target_types_rules
 from pants.build_graph.address import Address
-from pants.engine.internals.scheduler import ExecutionError
 from pants.engine.rules import QueryRule
 from pants.jvm import classpath, jvm_common
 from pants.jvm.resolve import coursier_fetch, jvm_tool
@@ -31,13 +30,13 @@ def rule_runner() -> RuleRunner:
     rule_runner = RuleRunner(
         target_types=[ClojureSourceTarget, ClojureDeployJarTarget, JvmArtifactTarget],
         rules=[
-            *compile_dependencies_rules(),
+            *provided_dependencies_rules(),
             *target_types_rules(),
             *classpath.rules(),
             *jvm_common.rules(),
             *coursier_fetch.rules(),
             *jvm_tool.rules(),
-            QueryRule(CompileOnlyDependencies, [ClojureCompileDependenciesField]),
+            QueryRule(ProvidedDependencies, [ClojureProvidedDependenciesField]),
         ],
     )
     rule_runner.set_options(
@@ -49,8 +48,8 @@ def rule_runner() -> RuleRunner:
     return rule_runner
 
 
-def test_empty_compile_dependencies(rule_runner: RuleRunner) -> None:
-    """Test that empty compile_dependencies field returns empty set."""
+def test_empty_provided_dependencies(rule_runner: RuleRunner) -> None:
+    """Test that empty provided field returns empty set."""
     rule_runner.write_files(
         {
             "locks/jvm/java17.lock.jsonc": "{}",
@@ -73,15 +72,16 @@ def test_empty_compile_dependencies(rule_runner: RuleRunner) -> None:
     )
 
     target = rule_runner.get_target(Address("src/hello", target_name="app"))
-    field = target[ClojureCompileDependenciesField]
+    field = target[ClojureProvidedDependenciesField]
 
-    result = rule_runner.request(CompileOnlyDependencies, [field])
+    result = rule_runner.request(ProvidedDependencies, [field])
 
     assert len(result.addresses) == 0
+    assert len(result.coordinates) == 0
 
 
-def test_single_compile_dependency_no_transitives(rule_runner: RuleRunner) -> None:
-    """Test compile dependency with no transitive dependencies."""
+def test_single_provided_dependency_no_transitives(rule_runner: RuleRunner) -> None:
+    """Test provided dependency with no transitive dependencies."""
     rule_runner.write_files(
         {
             "locks/jvm/java17.lock.jsonc": "{}",
@@ -102,7 +102,7 @@ def test_single_compile_dependency_no_transitives(rule_runner: RuleRunner) -> No
                     name="app",
                     main="lib.core",
                     dependencies=[":core", ":api"],
-                    compile_dependencies=[":api"],
+                    provided=[":api"],
                 )
                 """
             ),
@@ -112,17 +112,19 @@ def test_single_compile_dependency_no_transitives(rule_runner: RuleRunner) -> No
     )
 
     target = rule_runner.get_target(Address("src/lib", target_name="app"))
-    field = target[ClojureCompileDependenciesField]
+    field = target[ClojureProvidedDependenciesField]
 
-    result = rule_runner.request(CompileOnlyDependencies, [field])
+    result = rule_runner.request(ProvidedDependencies, [field])
 
     # Should include just the api target
     assert len(result.addresses) == 1
     assert Address("src/lib", target_name="api") in result.addresses
+    # First-party targets don't have coordinates
+    assert len(result.coordinates) == 0
 
 
-def test_compile_dependency_with_transitives(rule_runner: RuleRunner) -> None:
-    """Test compile dependency with transitive dependencies."""
+def test_provided_dependency_with_transitives(rule_runner: RuleRunner) -> None:
+    """Test provided dependency with transitive dependencies."""
     rule_runner.write_files(
         {
             "locks/jvm/java17.lock.jsonc": "{}",
@@ -157,7 +159,7 @@ def test_compile_dependency_with_transitives(rule_runner: RuleRunner) -> None:
                     name="app",
                     main="app.core",
                     dependencies=[":core", "//src/api:interface"],
-                    compile_dependencies=["//src/api:interface"],
+                    provided=["//src/api:interface"],
                 )
                 """
             ),
@@ -166,9 +168,9 @@ def test_compile_dependency_with_transitives(rule_runner: RuleRunner) -> None:
     )
 
     target = rule_runner.get_target(Address("src/app", target_name="app"))
-    field = target[ClojureCompileDependenciesField]
+    field = target[ClojureProvidedDependenciesField]
 
-    result = rule_runner.request(CompileOnlyDependencies, [field])
+    result = rule_runner.request(ProvidedDependencies, [field])
 
     # Should include both api:interface and its transitive dependency base:util
     assert len(result.addresses) == 2
@@ -176,8 +178,8 @@ def test_compile_dependency_with_transitives(rule_runner: RuleRunner) -> None:
     assert Address("src/base", target_name="util") in result.addresses
 
 
-def test_multiple_compile_dependencies(rule_runner: RuleRunner) -> None:
-    """Test multiple compile-only dependencies."""
+def test_multiple_provided_dependencies(rule_runner: RuleRunner) -> None:
+    """Test multiple provided dependencies."""
     rule_runner.write_files(
         {
             "locks/jvm/java17.lock.jsonc": "{}",
@@ -211,7 +213,7 @@ def test_multiple_compile_dependencies(rule_runner: RuleRunner) -> None:
                     name="app",
                     main="app.core",
                     dependencies=[":core", "//src/api1:lib", "//src/api2:lib"],
-                    compile_dependencies=["//src/api1:lib", "//src/api2:lib"],
+                    provided=["//src/api1:lib", "//src/api2:lib"],
                 )
                 """
             ),
@@ -220,9 +222,9 @@ def test_multiple_compile_dependencies(rule_runner: RuleRunner) -> None:
     )
 
     target = rule_runner.get_target(Address("src/app", target_name="app"))
-    field = target[ClojureCompileDependenciesField]
+    field = target[ClojureProvidedDependenciesField]
 
-    result = rule_runner.request(CompileOnlyDependencies, [field])
+    result = rule_runner.request(ProvidedDependencies, [field])
 
     # Should include both api libraries
     assert len(result.addresses) == 2
@@ -230,8 +232,8 @@ def test_multiple_compile_dependencies(rule_runner: RuleRunner) -> None:
     assert Address("src/api2", target_name="lib") in result.addresses
 
 
-def test_compile_dependency_with_shared_transitive(rule_runner: RuleRunner) -> None:
-    """Test compile dependencies that share a common transitive dependency."""
+def test_provided_dependency_with_shared_transitive(rule_runner: RuleRunner) -> None:
+    """Test provided dependencies that share a common transitive dependency."""
     rule_runner.write_files(
         {
             "locks/jvm/java17.lock.jsonc": "{}",
@@ -276,7 +278,7 @@ def test_compile_dependency_with_shared_transitive(rule_runner: RuleRunner) -> N
                     name="app",
                     main="app.core",
                     dependencies=[":core", "//src/api1:lib", "//src/api2:lib", "//src/common:util"],
-                    compile_dependencies=["//src/api1:lib", "//src/api2:lib"],
+                    provided=["//src/api1:lib", "//src/api2:lib"],
                 )
                 """
             ),
@@ -285,9 +287,9 @@ def test_compile_dependency_with_shared_transitive(rule_runner: RuleRunner) -> N
     )
 
     target = rule_runner.get_target(Address("src/app", target_name="app"))
-    field = target[ClojureCompileDependenciesField]
+    field = target[ClojureProvidedDependenciesField]
 
-    result = rule_runner.request(CompileOnlyDependencies, [field])
+    result = rule_runner.request(ProvidedDependencies, [field])
 
     # Should include api1, api2, and their shared common.util dependency
     assert len(result.addresses) == 3
@@ -297,7 +299,7 @@ def test_compile_dependency_with_shared_transitive(rule_runner: RuleRunner) -> N
 
 
 def test_deep_transitive_chain(rule_runner: RuleRunner) -> None:
-    """Test compile dependency with deep transitive chain."""
+    """Test provided dependency with deep transitive chain."""
     rule_runner.write_files(
         {
             "locks/jvm/java17.lock.jsonc": "{}",
@@ -335,7 +337,7 @@ def test_deep_transitive_chain(rule_runner: RuleRunner) -> None:
                     name="app",
                     main="app.core",
                     dependencies=[":core", "//src/c:lib"],
-                    compile_dependencies=["//src/c:lib"],
+                    provided=["//src/c:lib"],
                 )
                 """
             ),
@@ -344,9 +346,9 @@ def test_deep_transitive_chain(rule_runner: RuleRunner) -> None:
     )
 
     target = rule_runner.get_target(Address("src/app", target_name="app"))
-    field = target[ClojureCompileDependenciesField]
+    field = target[ClojureProvidedDependenciesField]
 
-    result = rule_runner.request(CompileOnlyDependencies, [field])
+    result = rule_runner.request(ProvidedDependencies, [field])
 
     # Should include the entire transitive chain: c -> b -> a
     assert len(result.addresses) == 3
@@ -355,8 +357,8 @@ def test_deep_transitive_chain(rule_runner: RuleRunner) -> None:
     assert Address("src/a", target_name="lib") in result.addresses
 
 
-def test_compile_dependencies_field_not_set(rule_runner: RuleRunner) -> None:
-    """Test that targets without compile_dependencies field return empty set."""
+def test_provided_dependencies_field_not_set(rule_runner: RuleRunner) -> None:
+    """Test that targets without provided field return empty set."""
     rule_runner.write_files(
         {
             "locks/jvm/java17.lock.jsonc": "{}",
@@ -380,8 +382,58 @@ def test_compile_dependencies_field_not_set(rule_runner: RuleRunner) -> None:
 
     target = rule_runner.get_target(Address("src/hello", target_name="app"))
     # Get the field even though it wasn't set (should have empty value)
-    field = target.get(ClojureCompileDependenciesField)
+    field = target.get(ClojureProvidedDependenciesField)
 
-    result = rule_runner.request(CompileOnlyDependencies, [field])
+    result = rule_runner.request(ProvidedDependencies, [field])
 
     assert len(result.addresses) == 0
+    assert len(result.coordinates) == 0
+
+
+def test_jvm_artifact_provided_dependency(rule_runner: RuleRunner) -> None:
+    """Test that jvm_artifact targets are resolved with Maven coordinates."""
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": "{}",
+            "3rdparty/jvm/BUILD": dedent(
+                """\
+                jvm_artifact(
+                    name="servlet-api",
+                    group="javax.servlet",
+                    artifact="javax.servlet-api",
+                    version="4.0.1",
+                )
+                """
+            ),
+            "src/hello/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["//3rdparty/jvm:servlet-api"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="hello.core",
+                    dependencies=[":core", "//3rdparty/jvm:servlet-api"],
+                    provided=["//3rdparty/jvm:servlet-api"],
+                )
+                """
+            ),
+            "src/hello/core.clj": "(ns hello.core (:gen-class))\n\n(defn -main [& args] (println \"Hello\"))",
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/hello", target_name="app"))
+    field = target[ClojureProvidedDependenciesField]
+
+    result = rule_runner.request(ProvidedDependencies, [field])
+
+    # Should include the jvm_artifact address
+    assert len(result.addresses) == 1
+    assert Address("3rdparty/jvm", target_name="servlet-api") in result.addresses
+
+    # Should include the Maven coordinates for JAR filtering
+    assert len(result.coordinates) == 1
+    assert ("javax.servlet", "javax.servlet-api") in result.coordinates

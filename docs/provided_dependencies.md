@@ -1,12 +1,12 @@
-# Compile-Only Dependencies in Clojure Deploy JARs
+# Provided Dependencies in Clojure Deploy JARs
 
 ## Overview
 
-Compile-only dependencies (also known as "provided" scope in Maven) are dependencies that are needed during compilation but should be excluded from the final JAR file. This is useful when deploying applications to environments that already provide certain libraries.
+Provided dependencies (equivalent to Maven's "provided" scope) are dependencies that are needed during compilation but should be excluded from the final JAR file. This is useful when deploying applications to environments that already provide certain libraries.
 
-## When to Use Compile-Only Dependencies
+## When to Use Provided Dependencies
 
-Use compile-only dependencies when:
+Use provided dependencies when:
 
 1. **Servlet Containers**: Deploying to Tomcat, Jetty, or other servlet containers that provide `javax.servlet` APIs
 2. **Platform Libraries**: Deploying to platforms that provide their own versions of common libraries (e.g., AWS Lambda, Google Cloud Functions)
@@ -15,14 +15,14 @@ Use compile-only dependencies when:
 
 ## Maven Comparison
 
-For users familiar with Maven, Pants' `compile_dependencies` field is equivalent to Maven's "provided" scope:
+For users familiar with Maven, Pants' `provided` field is equivalent to Maven's "provided" scope:
 
 **Maven**:
 ```xml
 <dependency>
     <groupId>javax.servlet</groupId>
-    <artifactId>servlet-api</artifactId>
-    <version>2.5</version>
+    <artifactId>javax.servlet-api</artifactId>
+    <version>4.0.1</version>
     <scope>provided</scope>
 </dependency>
 ```
@@ -32,15 +32,15 @@ For users familiar with Maven, Pants' `compile_dependencies` field is equivalent
 jvm_artifact(
     name="servlet-api",
     group="javax.servlet",
-    artifact="servlet-api",
-    version="2.5",
+    artifact="javax.servlet-api",
+    version="4.0.1",
 )
 
 clojure_deploy_jar(
     name="app",
     main="my.app.core",
     dependencies=[..., "//3rdparty/jvm:servlet-api"],
-    compile_dependencies=["//3rdparty/jvm:servlet-api"],
+    provided=["//3rdparty/jvm:servlet-api"],
 )
 ```
 
@@ -48,55 +48,63 @@ clojure_deploy_jar(
 
 ### Dependency Declaration
 
-Dependencies marked as compile-only must appear in **both** fields:
+Dependencies marked as provided must appear in **both** fields:
 
 1. `dependencies` - So they're available during compilation and dependency inference
-2. `compile_dependencies` - To mark them for exclusion from the JAR
+2. `provided` - To mark them for exclusion from the JAR
 
 **Example**:
 ```python
 clojure_deploy_jar(
     name="app",
     main="my.app.core",
-    dependencies=[":handler", ":servlet-api"],     # All deps for compilation
-    compile_dependencies=[":servlet-api"],          # Subset to exclude from JAR
+    dependencies=[":handler", ":servlet-api"],  # All deps for compilation
+    provided=[":servlet-api"],                   # Subset to exclude from JAR
 )
 ```
 
+### Coordinate-Based Matching
+
+For `jvm_artifact` targets, matching is based on Maven **groupId:artifactId** (version is ignored). This means if you mark `org.example:lib:1.0` as provided, any version of `org.example:lib` will be excluded from the JAR.
+
+This is particularly useful when:
+- Different transitive dependencies pull in different versions of the same artifact
+- You want to exclude an entire artifact family regardless of version
+
 ### Transitive Exclusion
 
-When you mark a dependency as compile-only, **all of its transitive dependencies are also excluded** from the JAR. This ensures consistency - if library A depends on library B, and you exclude A, then B will also be excluded.
+When you mark a dependency as provided, **all of its transitive dependencies are also excluded** from the JAR. This ensures consistency - if library A depends on library B, and you exclude A, then B will also be excluded.
 
 **Example**:
 ```python
-# servlet-api depends on commons-logging
+# If servlet-api depends on commons-logging
 jvm_artifact(
     name="servlet-api",
     group="javax.servlet",
-    artifact="servlet-api",
-    version="2.5",
+    artifact="javax.servlet-api",
+    version="4.0.1",
     # Has transitive dependency on commons-logging
 )
 
 clojure_deploy_jar(
     name="app",
     dependencies=[":servlet-api"],
-    compile_dependencies=[":servlet-api"],
+    provided=[":servlet-api"],
 )
 # Result: Both servlet-api AND commons-logging are excluded from the JAR
 ```
 
 ### AOT Compilation
 
-Compile-only dependencies are **available during AOT compilation**. The Pants backend ensures that:
+Provided dependencies are **available during AOT compilation**. The Pants backend ensures that:
 
-1. AOT compilation has access to all dependencies (including compile-only ones)
-2. The final JAR excludes compile-only dependencies
-3. Both source files and compiled `.class` files from compile-only dependencies are excluded
+1. AOT compilation has access to all dependencies (including provided ones)
+2. The final JAR excludes provided dependencies
+3. Both source files and compiled `.class` files from provided dependencies are excluded
 
 ## Complete Example: Web Application
 
-Here's a complete example of a web application that uses compile-only dependencies:
+Here's a complete example of a web application that uses provided dependencies:
 
 ### Directory Structure
 ```
@@ -118,8 +126,8 @@ myapp/
 jvm_artifact(
     name="servlet-api",
     group="javax.servlet",
-    artifact="servlet-api",
-    version="2.5",
+    artifact="javax.servlet-api",
+    version="4.0.1",
 )
 
 # Included in the JAR
@@ -150,7 +158,7 @@ clojure_deploy_jar(
         "//3rdparty/jvm:compojure",
     ],
     # Only servlet-api is provided by the container
-    compile_dependencies=["//3rdparty/jvm:servlet-api"],
+    provided=["//3rdparty/jvm:servlet-api"],
 )
 ```
 
@@ -161,7 +169,7 @@ clojure_deploy_jar(
   (:import [javax.servlet.http HttpServlet HttpServletRequest HttpServletResponse]))
 
 (defn handle-request [^HttpServletRequest request ^HttpServletResponse response]
-  ;; Uses both servlet-api (compile-only) and compojure (bundled)
+  ;; Uses both servlet-api (provided) and compojure (bundled)
   ...)
 ```
 
@@ -186,12 +194,12 @@ pants package src/myapp:app
 # - EXCLUDES: servlet-api (provided by Tomcat/Jetty)
 ```
 
-## First-Party Compile-Only Dependencies
+## First-Party Provided Dependencies
 
-Compile-only dependencies also work with first-party Clojure code. This is useful when building libraries with optional platform-specific implementations:
+Provided dependencies also work with first-party Clojure code. This is useful when building libraries with optional platform-specific implementations:
 
 ```python
-# Platform interface (compile-only for implementations)
+# Platform interface (provided for implementations)
 clojure_source(
     name="platform-interface",
     source="interface.clj",
@@ -210,7 +218,7 @@ clojure_deploy_jar(
     main="mylambda.core",
     dependencies=[":aws-impl", ":platform-interface"],
     # Interface is provided by the platform layer at runtime
-    compile_dependencies=[":platform-interface"],
+    provided=[":platform-interface"],
 )
 ```
 
@@ -240,7 +248,7 @@ jar tf dist/src.myapp/app.jar | grep -i servlet
 clojure_deploy_jar(
     name="app",
     dependencies=[":handler"],  # Missing servlet-api!
-    compile_dependencies=[":servlet-api"],
+    provided=[":servlet-api"],
 )
 ```
 
@@ -249,17 +257,17 @@ clojure_deploy_jar(
 clojure_deploy_jar(
     name="app",
     dependencies=[":handler", ":servlet-api"],  # Listed
-    compile_dependencies=[":servlet-api"],       # And marked for exclusion
+    provided=[":servlet-api"],                   # And marked for exclusion
 )
 ```
 
 ### 2. Not Understanding Transitive Exclusion
 
-If `lib-a` depends on `lib-b`, marking `lib-a` as compile-only also excludes `lib-b`. This is intentional and matches Maven behavior.
+If `lib-a` depends on `lib-b`, marking `lib-a` as provided also excludes `lib-b`. This is intentional and matches Maven behavior.
 
 ### 3. Using with Runtime-Required Dependencies
 
-Don't mark dependencies as compile-only if they're actually needed at runtime. This will cause `ClassNotFoundException` at runtime.
+Don't mark dependencies as provided if they're actually needed at runtime. This will cause `ClassNotFoundException` at runtime.
 
 ## Troubleshooting
 
@@ -273,17 +281,17 @@ If you get `ClassNotFoundException` for a class that should be provided:
 
 ### JAR Still Contains Excluded Dependencies
 
-If dependencies marked as compile-only still appear in the JAR:
+If dependencies marked as provided still appear in the JAR:
 
-1. Verify the syntax in `compile_dependencies` field
+1. Verify the syntax in `provided` field
 2. Run `pants dependencies src/myapp:app` to check the dependency graph
-3. Check if the dependency is also pulled in transitively by a non-compile-only dependency
+3. Check if the dependency is also pulled in transitively by a non-provided dependency
 
 ### AOT Compilation Fails
 
 If AOT compilation fails with `ClassNotFoundException`:
 
-1. Ensure the compile-only dependency is in the regular `dependencies` field
+1. Ensure the provided dependency is in the regular `dependencies` field
 2. Check that the dependency is correctly resolved in your lockfile
 3. Verify the namespace declarations in your Clojure files
 

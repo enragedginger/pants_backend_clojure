@@ -8,7 +8,7 @@ import pytest
 
 from clojure_backend.aot_compile import rules as aot_compile_rules
 from clojure_backend import compile_clj
-from clojure_backend.compile_dependencies import rules as compile_dependencies_rules
+from clojure_backend.provided_dependencies import rules as provided_dependencies_rules
 from clojure_backend.goals.package import (
     ClojureDeployJarFieldSet,
     package_clojure_deploy_jar,
@@ -16,7 +16,7 @@ from clojure_backend.goals.package import (
 from clojure_backend.goals.package import rules as package_rules
 from clojure_backend.target_types import (
     ClojureAOTNamespacesField,
-    ClojureCompileDependenciesField,
+    ClojureProvidedDependenciesField,
     ClojureDeployJarTarget,
     ClojureMainNamespaceField,
     ClojureSourceTarget,
@@ -41,7 +41,7 @@ def rule_runner() -> RuleRunner:
         rules=[
             *package_rules(),
             *aot_compile_rules(),
-            *compile_dependencies_rules(),
+            *provided_dependencies_rules(),
             *classpath.rules(),
             *compile_clj.rules(),
             *target_types_rules(),
@@ -273,7 +273,7 @@ def test_clojure_deploy_jar_target_has_required_fields() -> None:
     assert "main" in field_aliases
     assert "aot" in field_aliases
     assert "dependencies" in field_aliases
-    assert "compile_dependencies" in field_aliases
+    assert "provided" in field_aliases
     assert "resolve" in field_aliases
 
 
@@ -405,22 +405,22 @@ def test_package_deploy_jar_with_transitive_dependencies(rule_runner: RuleRunner
     assert len(result.artifacts) == 1
 
 
-def test_compile_dependencies_field_can_be_parsed(rule_runner: RuleRunner) -> None:
-    """Test that compile_dependencies field can be parsed and accessed."""
+def test_provided_field_can_be_parsed(rule_runner: RuleRunner) -> None:
+    """Test that provided field can be parsed and accessed."""
     rule_runner.write_files(
         {
             "locks/jvm/java17.lock.jsonc": "{}",
             "src/lib/BUILD": dedent(
                 """\
                 clojure_source(
-                    name="provided",
-                    source="provided.clj",
+                    name="api",
+                    source="api.clj",
                 )
                 """
             ),
-            "src/lib/provided.clj": dedent(
+            "src/lib/api.clj": dedent(
                 """\
-                (ns lib.provided)
+                (ns lib.api)
 
                 (defn api-fn []
                   "provided API")
@@ -431,25 +431,25 @@ def test_compile_dependencies_field_can_be_parsed(rule_runner: RuleRunner) -> No
                 clojure_source(
                     name="core",
                     source="core.clj",
-                    dependencies=["//src/lib:provided"],
+                    dependencies=["//src/lib:api"],
                 )
 
                 clojure_deploy_jar(
                     name="app",
                     main="myapp.core",
-                    dependencies=[":core", "//src/lib:provided"],
-                    compile_dependencies=["//src/lib:provided"],
+                    dependencies=[":core", "//src/lib:api"],
+                    provided=["//src/lib:api"],
                 )
                 """
             ),
             "src/myapp/core.clj": dedent(
                 """\
                 (ns myapp.core
-                  (:require [lib.provided])
+                  (:require [lib.api])
                   (:gen-class))
 
                 (defn -main [& args]
-                  (println (lib.provided/api-fn)))
+                  (println (lib.api/api-fn)))
                 """
             ),
         }
@@ -458,17 +458,17 @@ def test_compile_dependencies_field_can_be_parsed(rule_runner: RuleRunner) -> No
     target = rule_runner.get_target(Address("src/myapp", target_name="app"))
 
     # Verify the field exists and can be accessed
-    assert target.has_field(ClojureCompileDependenciesField)
-    compile_deps_field = target[ClojureCompileDependenciesField]
-    assert compile_deps_field.value is not None
+    assert target.has_field(ClojureProvidedDependenciesField)
+    provided_field = target[ClojureProvidedDependenciesField]
+    assert provided_field.value is not None
 
     # Create field set
     field_set = ClojureDeployJarFieldSet.create(target)
-    assert field_set.compile_dependencies is not None
+    assert field_set.provided is not None
 
 
-def test_compile_dependencies_excluded_from_jar(rule_runner: RuleRunner) -> None:
-    """Test that compile_dependencies are excluded from the final JAR."""
+def test_provided_dependencies_excluded_from_jar(rule_runner: RuleRunner) -> None:
+    """Test that provided dependencies are excluded from the final JAR."""
     import zipfile
 
     rule_runner.write_files(
@@ -518,7 +518,7 @@ def test_compile_dependencies_excluded_from_jar(rule_runner: RuleRunner) -> None
                     name="app",
                     main="app.core",
                     dependencies=[":core", "//src/api:interface", "//src/lib:util"],
-                    compile_dependencies=["//src/api:interface"],
+                    provided=["//src/api:interface"],
                 )
                 """
             ),
@@ -569,7 +569,9 @@ def test_compile_dependencies_excluded_from_jar(rule_runner: RuleRunner) -> None
     assert any('lib/util' in entry for entry in jar_entries), \
         "Runtime dependency lib.util classes should be in JAR"
 
-    # The compile-only dependency (api.interface) classes should NOT be present
+    # The provided dependency (api.interface) classes should NOT be present
     api_entries = [entry for entry in jar_entries if 'api/interface' in entry]
     assert len(api_entries) == 0, \
-        f"Compile-only dependency api.interface should NOT be in JAR, but found: {api_entries}"
+        f"Provided dependency api.interface should NOT be in JAR, but found: {api_entries}"
+
+

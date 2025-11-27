@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import re
 import zipfile
 from dataclasses import dataclass
@@ -35,10 +36,10 @@ from clojure_backend.aot_compile import (
     CompileClojureAOTRequest,
     CompiledClojureClasses,
 )
-from clojure_backend.compile_dependencies import CompileOnlyDependencies
+from clojure_backend.provided_dependencies import ProvidedDependencies
 from clojure_backend.target_types import (
     ClojureAOTNamespacesField,
-    ClojureCompileDependenciesField,
+    ClojureProvidedDependenciesField,
     ClojureDeployJarTarget,
     ClojureMainNamespaceField,
     ClojureSourceField,
@@ -58,7 +59,7 @@ class ClojureDeployJarFieldSet(PackageFieldSet):
 
     main: ClojureMainNamespaceField
     aot: ClojureAOTNamespacesField
-    compile_dependencies: ClojureCompileDependenciesField
+    provided: ClojureProvidedDependenciesField
     jdk: JvmJdkField
     resolve: JvmResolveField
     output_path: OutputPathField
@@ -190,25 +191,25 @@ async def package_clojure_deploy_jar(
     # Get JDK request from field
     jdk_request = JdkRequest.from_field(field_set.jdk)
 
-    # Get compile-only dependencies to exclude from the JAR
-    compile_only_deps = await Get(
-        CompileOnlyDependencies,
-        ClojureCompileDependenciesField,
-        field_set.compile_dependencies,
+    # Get provided dependencies to exclude from the JAR
+    provided_deps = await Get(
+        ProvidedDependencies,
+        ClojureProvidedDependenciesField,
+        field_set.provided,
     )
 
     # Build full address set for AOT compilation (includes everything)
     all_source_addresses = Addresses(tgt.address for tgt in clojure_source_targets)
 
-    # Build runtime address set for JAR packaging (excludes compile-only and their transitives)
+    # Build runtime address set for JAR packaging (excludes provided and their transitives)
     runtime_source_addresses = Addresses(
         addr for addr in all_source_addresses
-        if addr not in compile_only_deps.addresses
+        if addr not in provided_deps.addresses
     )
 
     # Get JDK environment, runtime classpath, and compiled classes
-    # Note: AOT compilation uses ALL addresses (including compile-only)
-    #       JAR packaging uses RUNTIME addresses (excluding compile-only)
+    # Note: AOT compilation uses ALL addresses (including provided)
+    #       JAR packaging uses RUNTIME addresses (excluding provided)
     jdk_env, runtime_classpath, compiled_classes = await MultiGet(
         Get(JdkEnvironment, JdkRequest, jdk_request),
         Get(Classpath, Addresses, runtime_source_addresses),
@@ -228,22 +229,22 @@ async def package_clojure_deploy_jar(
         file_ending="jar",
     )
 
-    # Build set of namespaces for compile-only dependencies to exclude from JAR
-    # Collect all source fields for compile-only targets
-    compile_only_source_fields = []
+    # Build set of namespaces for provided dependencies to exclude from JAR
+    # Collect all source fields for provided targets
+    provided_source_fields = []
     for tgt in clojure_source_targets:
-        if tgt.address in compile_only_deps.addresses:
+        if tgt.address in provided_deps.addresses:
             if tgt.has_field(ClojureSourceField):
-                compile_only_source_fields.append(tgt[ClojureSourceField])
+                provided_source_fields.append(tgt[ClojureSourceField])
             elif tgt.has_field(ClojureTestSourceField):
-                compile_only_source_fields.append(tgt[ClojureTestSourceField])
+                provided_source_fields.append(tgt[ClojureTestSourceField])
 
     # Get all source files in parallel using MultiGet
-    compile_only_namespaces = set()
-    if compile_only_source_fields:
+    provided_namespaces = set()
+    if provided_source_fields:
         all_source_requests = await MultiGet(
             Get(SourceFiles, SourceFilesRequest([field]))
-            for field in compile_only_source_fields
+            for field in provided_source_fields
         )
 
         # Get all source contents in parallel
@@ -260,7 +261,7 @@ async def package_clojure_deploy_jar(
                     content = file_content.content.decode("utf-8")
                     namespace = parse_namespace(content)
                     if namespace:
-                        compile_only_namespaces.add(namespace)
+                        provided_namespaces.add(namespace)
 
     # Create JAR manifest with main class
     manifest_content = f"""\
@@ -284,9 +285,29 @@ Created-By: Pants Build System
         # Track what we've added to avoid duplicates
         added_entries = {'META-INF/MANIFEST.MF'}
 
-        # Extract and add all dependency JARs
+        # Build set of artifact names to exclude based on coordinates
+        # JAR filenames typically follow: {artifact}-{version}.jar pattern
+        excluded_artifact_prefixes = set()
+        for group, artifact in provided_deps.coordinates:
+            # Match JAR files that start with the artifact name followed by a dash
+            # e.g., "clojure-1.12.0.jar" matches artifact "clojure"
+            excluded_artifact_prefixes.add(f"{artifact}-")
+
+        # Extract and add all dependency JARs (except provided ones)
         for file_content in digest_contents:
             if file_content.path.endswith('.jar'):
+                # Check if this JAR should be excluded based on coordinates
+                jar_filename = os.path.basename(file_content.path)
+                should_exclude = False
+                for prefix in excluded_artifact_prefixes:
+                    if jar_filename.startswith(prefix):
+                        should_exclude = True
+                        break
+
+                if should_exclude:
+                    # Skip this JAR - it's a provided dependency
+                    continue
+
                 try:
                     jar_bytes = io.BytesIO(file_content.content)
                     with zipfile.ZipFile(jar_bytes, 'r') as dep_jar:
@@ -305,23 +326,23 @@ Created-By: Pants Build System
                     pass
 
         # Add compiled classes (they're in the classes/ directory)
-        # Exclude classes from compile-only dependencies
+        # Exclude classes from provided dependencies
         for file_content in digest_contents:
             if file_content.path.startswith('classes/') and file_content.path.endswith('.class'):
                 # Remove 'classes/' prefix to get the archive name
                 arcname = file_content.path[8:]  # len('classes/') == 8
 
-                # Check if this class file belongs to a compile-only namespace
-                is_compile_only = False
-                for namespace in compile_only_namespaces:
+                # Check if this class file belongs to a provided namespace
+                is_provided = False
+                for namespace in provided_namespaces:
                     # Convert namespace to path (e.g., "api.interface" -> "api/interface")
                     namespace_path = namespace.replace('.', '/').replace('-', '_')
                     if arcname.startswith(namespace_path):
-                        is_compile_only = True
+                        is_provided = True
                         break
 
-                # Only add if not from a compile-only dependency
-                if not is_compile_only and arcname not in added_entries:
+                # Only add if not from a provided dependency
+                if not is_provided and arcname not in added_entries:
                     jar.writestr(arcname, file_content.content)
                     added_entries.add(arcname)
 

@@ -249,15 +249,18 @@ class ClojureAOTNamespacesField(StringSequenceField):
     default = ()  # Empty = main namespace only (transitive)
 
 
-class ClojureCompileDependenciesField(SpecialCasedDependencies):
-    alias = "compile_dependencies"
+class ClojureProvidedDependenciesField(SpecialCasedDependencies):
+    alias = "provided"
     help = (
-        "Dependencies that are needed for compilation but should be excluded from the final JAR.\n\n"
-        "This is similar to Maven's 'provided' scope - dependencies in this field will be available "
+        "Dependencies that are 'provided' at runtime and should be excluded from the final JAR.\n\n"
+        "Similar to Maven's 'provided' scope - dependencies in this field will be available "
         "during AOT compilation, but they (and all their transitive dependencies) will be excluded "
         "from the packaged JAR.\n\n"
+        "Matching is based on Maven groupId:artifactId coordinates (version is ignored). "
+        "This means if you mark `org.example:lib:1.0` as provided, any version of "
+        "`org.example:lib` will be excluded.\n\n"
         "Important: Dependencies listed here MUST also appear in the regular 'dependencies' field. "
-        "The 'compile_dependencies' field marks which dependencies should be excluded from the JAR, "
+        "The 'provided' field marks which dependencies should be excluded from the JAR, "
         "while the 'dependencies' field makes them available for compilation and dependency resolution.\n\n"
         "Common use cases:\n"
         "- Servlet APIs or application server libraries that will be provided at runtime\n"
@@ -265,10 +268,10 @@ class ClojureCompileDependenciesField(SpecialCasedDependencies):
         "- Dependencies that should not be bundled to avoid classpath conflicts\n\n"
         "Example:\n"
         "  clojure_deploy_jar(\n"
-        "      name='app',\n"
-        "      main='my.app.core',\n"
-        "      dependencies=[':servlet-api', ':my-lib'],  # All deps for compilation\n"
-        "      compile_dependencies=[':servlet-api'],      # Exclude from JAR\n"
+        "      name='webapp',\n"
+        "      main='my.web.handler',\n"
+        "      dependencies=[':servlet-api', ':my-lib'],\n"
+        "      provided=[':servlet-api'],  # Container provides this at runtime\n"
         "  )"
     )
 
@@ -280,7 +283,7 @@ class ClojureDeployJarTarget(Target):
         JvmDependenciesField,
         ClojureMainNamespaceField,
         ClojureAOTNamespacesField,
-        ClojureCompileDependenciesField,
+        ClojureProvidedDependenciesField,
         JvmResolveField,
         JvmJdkField,
         OutputPathField,
