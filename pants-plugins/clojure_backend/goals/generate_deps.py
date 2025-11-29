@@ -134,15 +134,28 @@ def format_deps_edn_deps(entries: list[LockFileEntry]) -> str:
 
     Each dependency includes :exclusions [*] to prevent transitive resolution,
     since Pants lock files already have all transitives flattened.
+
+    Defensively deduplicates entries by (group, artifact) - if duplicates exist,
+    the first one encountered (after sorting by group/artifact) is kept.
     """
     if not entries:
         return "{}"
 
-    dep_lines = []
+    # Deduplicate by (group, artifact), keeping first entry after sorting
+    seen: dict[tuple[str, str], LockFileEntry] = {}
     for entry in sorted(entries, key=lambda e: (e.group, e.artifact)):
+        key = (entry.group, entry.artifact)
+        if key not in seen:
+            seen[key] = entry
+
+    dep_lines = []
+    for entry in seen.values():
         dep_key = f"{entry.group}/{entry.artifact}"
         dep_value = f'{{:mvn/version "{entry.version}" :exclusions [*]}}'
         dep_lines.append(f"   {dep_key} {dep_value}")
+
+    # Sort for consistent output ordering
+    dep_lines.sort()
 
     return "{\n" + "\n".join(dep_lines) + "}"
 

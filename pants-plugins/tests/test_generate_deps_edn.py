@@ -262,6 +262,57 @@ def test_format_deps_edn_deps_sorting() -> None:
     assert dep_keys == ["aaa/first", "mmm/middle", "zzz/last"]
 
 
+def test_format_deps_edn_deps_handles_duplicate_artifacts() -> None:
+    """Test that duplicate group/artifact entries are deduplicated.
+
+    If duplicate entries exist (same group/artifact but different versions),
+    only the first one encountered after sorting should be kept.
+    This provides deterministic output.
+    """
+    entries = [
+        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.0"),
+        LockFileEntry(group="org.clojure", artifact="clojure", version="1.11.0"),  # Duplicate
+        LockFileEntry(group="com.google.guava", artifact="guava", version="33.0.0-jre"),
+        LockFileEntry(group="com.google.guava", artifact="guava", version="32.0.0-jre"),  # Duplicate
+    ]
+
+    result = format_deps_edn_deps(entries)
+
+    # Count occurrences of each dependency key
+    clojure_count = result.count("org.clojure/clojure")
+    guava_count = result.count("com.google.guava/guava")
+
+    assert clojure_count == 1, f"Expected 1 org.clojure/clojure entry, found {clojure_count}"
+    assert guava_count == 1, f"Expected 1 com.google.guava/guava entry, found {guava_count}"
+
+    # Verify that the first version (after sorting by group/artifact) is kept
+    # The sort is by (group, artifact) only, so within duplicates, original order is preserved
+    # (Python's sort is stable). We should have 1.12.0 for clojure (first in input)
+    # and 33.0.0-jre for guava (first in input)
+    assert '1.12.0' in result, "Expected version 1.12.0 (first occurrence in input list)"
+    assert '33.0.0-jre' in result, "Expected version 33.0.0-jre (first occurrence in input list)"
+    assert '1.11.0' not in result, "Should not contain duplicate version 1.11.0"
+    assert '32.0.0-jre' not in result, "Should not contain duplicate version 32.0.0-jre"
+
+
+def test_format_deps_edn_deps_duplicate_same_version() -> None:
+    """Test that duplicate entries with identical versions produce single entry."""
+    entries = [
+        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.0"),
+        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.0"),  # Exact duplicate
+        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.0"),  # Another duplicate
+    ]
+
+    result = format_deps_edn_deps(entries)
+
+    # Should have exactly one entry
+    clojure_count = result.count("org.clojure/clojure")
+    assert clojure_count == 1, f"Expected 1 org.clojure/clojure entry, found {clojure_count}"
+
+    # Verify the correct version is present
+    assert '1.12.0' in result
+
+
 def test_format_deps_edn_complete() -> None:
     """Test formatting a complete deps.edn file."""
     from clojure_backend.goals.generate_deps import ClojureSourcesInfo
