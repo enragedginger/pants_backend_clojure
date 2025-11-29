@@ -174,7 +174,7 @@ Access in Pants rules via `CoursierSubsystem.repos` property (returns a tuple of
     - Format of the generated `:mvn/repos` map
     - How repo names are derived from URLs
 
-### Phase 3: Verification
+### Phase 3: Verification [DONE]
 
 1. Run unit tests: `pants test pants-plugins/tests/test_generate_deps_edn.py`
 2. Run all plugin tests: `pants test pants-plugins::`
