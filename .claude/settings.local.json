@@ -4,7 +4,8 @@
       "Bash(pants test:*)",
       "Bash(pants help:*)",
       "WebFetch(domain:clojure.org)",
-      "Bash(pants list:*)"
+      "Bash(pants list:*)",
+      "WebFetch(domain:github.com)"
     ],
     "deny": [],
     "ask": []
