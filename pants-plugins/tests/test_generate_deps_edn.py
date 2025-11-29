@@ -580,3 +580,103 @@ def test_format_deps_edn_deps_special_characters() -> None:
     result = format_deps_edn_deps(entries)
 
     assert 'com.example/lib {:mvn/version "1.0.0-alpha+build.123" :exclusions [*]}' in result
+
+
+def test_generate_deps_edn_nested_source_dirs(rule_runner: RuleRunner) -> None:
+    """Test that source roots are correctly detected for nested directory structures.
+
+    This tests the bug where source roots were incorrectly set to the BUILD file's
+    directory instead of the actual source root (e.g., sub-project instead of sub-project/src).
+    """
+    import re
+
+    rule_runner.write_files(
+        {
+            "3rdparty/jvm/BUILD": dedent(
+                """\
+                jvm_artifact(
+                    name="org.clojure_clojure",
+                    group="org.clojure",
+                    artifact="clojure",
+                    version="1.12.0",
+                )
+                """
+            ),
+            "3rdparty/jvm/default.lock": _CLOJURE_LOCKFILE,
+            "sub-project/BUILD": dedent(
+                """\
+                clojure_sources(
+                    name='lib',
+                    sources=["src/**/*.clj"],
+                    dependencies=[
+                        '3rdparty/jvm:org.clojure_clojure',
+                    ],
+                )
+                clojure_tests(
+                    name='tests',
+                    sources=["test/**/*.clj"],
+                    dependencies=[
+                        ':lib',
+                        '3rdparty/jvm:org.clojure_clojure',
+                    ],
+                )
+                """
+            ),
+            "sub-project/src/myapp/core.clj": dedent(
+                """\
+                (ns myapp.core)
+
+                (defn greet [name]
+                  (str "Hello, " name "!"))
+                """
+            ),
+            "sub-project/test/myapp/core_test.clj": dedent(
+                """\
+                (ns myapp.core-test
+                  (:require [clojure.test :refer [deftest is]]
+                            [myapp.core :refer [greet]]))
+
+                (deftest test-greet
+                  (is (= "Hello, World!" (greet "World"))))
+                """
+            ),
+        }
+    )
+
+    args = [
+        f"--jvm-resolves={repr(_JVM_RESOLVES)}",
+        "--jvm-default-resolve=jvm-default",
+    ]
+    rule_runner.set_options(args, env_inherit=PYTHON_BOOTSTRAP_ENV)
+
+    # Run the goal
+    result = rule_runner.run_goal_rule(
+        GenerateDepsEdn,
+        args=["--generate-deps-edn-resolve=jvm-default"],
+        env_inherit=PYTHON_BOOTSTRAP_ENV,
+    )
+
+    assert result.exit_code == 0
+
+    # Read and verify the generated deps.edn content
+    from pathlib import Path
+    deps_edn_path = Path(rule_runner.build_root) / "deps.edn"
+    deps_edn_content = deps_edn_path.read_text()
+
+    # Verify source paths contain the correct nested path
+    assert "sub-project/src" in deps_edn_content, (
+        f"Expected 'sub-project/src' in :paths, got: {deps_edn_content}"
+    )
+
+    # Verify test paths contain the correct nested path
+    assert "sub-project/test" in deps_edn_content, (
+        f"Expected 'sub-project/test' in :test :extra-paths, got: {deps_edn_content}"
+    )
+
+    # Verify we DON'T have the incorrect parent directory
+    # Check that "sub-project" alone (not followed by /src or /test) is not in paths
+    # Match "sub-project" that's not followed by /src or /test
+    incorrect_path_pattern = r'"sub-project"(?!/(?:src|test))'
+    assert not re.search(incorrect_path_pattern, deps_edn_content), (
+        f"Found incorrect path 'sub-project' without /src or /test suffix: {deps_edn_content}"
+    )

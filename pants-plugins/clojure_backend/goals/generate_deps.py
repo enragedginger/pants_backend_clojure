@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import tomllib
 from dataclasses import dataclass
-from pathlib import PurePath
 
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.engine.console import Console
@@ -12,13 +11,12 @@ from pants.engine.fs import (
     DigestContents,
     FileContent,
     PathGlobs,
-    Snapshot,
     Workspace,
 )
 from pants.engine.goal import Goal, GoalSubsystem
 from pants.engine.internals.selectors import Get, MultiGet
 from pants.engine.rules import collect_rules, goal_rule
-from pants.engine.target import AllTargets, Target
+from pants.engine.target import AllTargets
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmResolveField
 from pants.option.option_types import StrOption
@@ -149,11 +147,15 @@ def format_deps_edn_deps(entries: list[LockFileEntry]) -> str:
     return "{\n" + "\n".join(dep_lines) + "}"
 
 
-def determine_source_root(target: Target, source_field, source_content: str) -> str | None:
-    """Determine the source root directory for a Clojure target.
+def determine_source_root(file_path: str, source_content: str) -> str | None:
+    """Determine the source root directory for a Clojure file.
 
     For a file like projects/foo/src/example/core.clj with namespace example.core,
     the source root is projects/foo/src.
+
+    Args:
+        file_path: The actual path to the Clojure source file (from DigestContents)
+        source_content: The file content for namespace parsing
 
     Returns None if the namespace can't be parsed.
     """
@@ -161,15 +163,8 @@ def determine_source_root(target: Target, source_field, source_content: str) -> 
     if not namespace:
         return None
 
-    # Get the actual file path
-    source_file = target.address.spec_path
-    if source_field.value:
-        # source_field.value is a tuple/list of files
-        if source_field.value:
-            source_file = str(PurePath(target.address.spec_path) / source_field.value[0])
-
-    # Use the shared utility function
-    return _determine_source_root(source_file, namespace)
+    # Use the shared utility function with the actual file path
+    return _determine_source_root(file_path, namespace)
 
 
 @dataclass(frozen=True)
@@ -244,38 +239,36 @@ async def gather_clojure_sources_for_resolve(
     for i, target in enumerate(source_targets):
         digest_contents = all_digest_contents[i]
         if not digest_contents:
-            # Fallback: use target directory
+            # Fallback: use target directory (only when no files match)
             source_roots.add(target.address.spec_path or ".")
             continue
 
         source_content = digest_contents[0].content.decode("utf-8")
-        source_root = determine_source_root(
-            target, target[ClojureSourceField], source_content
-        )
+        file_path = digest_contents[0].path  # Use actual file path from digest
+        source_root = determine_source_root(file_path, source_content)
         if source_root:
             source_roots.add(source_root)
         else:
-            # Fallback: use target directory
-            source_roots.add(target.address.spec_path or ".")
+            # Fallback: use directory containing the file
+            source_roots.add("/".join(file_path.split("/")[:-1]) or ".")
 
     # Process test targets
     test_offset = len(source_targets)
     for i, target in enumerate(test_targets):
         digest_contents = all_digest_contents[test_offset + i]
         if not digest_contents:
-            # Fallback: use target directory
+            # Fallback: use target directory (only when no files match)
             test_roots.add(target.address.spec_path or ".")
             continue
 
         source_content = digest_contents[0].content.decode("utf-8")
-        source_root = determine_source_root(
-            target, target[ClojureTestSourceField], source_content
-        )
+        file_path = digest_contents[0].path  # Use actual file path from digest
+        source_root = determine_source_root(file_path, source_content)
         if source_root:
             test_roots.add(source_root)
         else:
-            # Fallback: use target directory
-            test_roots.add(target.address.spec_path or ".")
+            # Fallback: use directory containing the file
+            test_roots.add("/".join(file_path.split("/")[:-1]) or ".")
 
     return ClojureSourcesInfo(source_paths=source_roots, test_paths=test_roots)
 
