@@ -285,13 +285,12 @@ Created-By: Pants Build System
         # Track what we've added to avoid duplicates
         added_entries = {'META-INF/MANIFEST.MF'}
 
-        # Build set of artifact names to exclude based on coordinates
-        # JAR filenames typically follow: {artifact}-{version}.jar pattern
+        # Build set of artifact prefixes to exclude based on coordinates
+        # Pants/Coursier JAR filenames follow: {group}_{artifact}_{version}.jar pattern
+        # e.g., "org.clojure_clojure_1.11.0.jar" for org.clojure:clojure:1.11.0
         excluded_artifact_prefixes = set()
         for group, artifact in provided_deps.coordinates:
-            # Match JAR files that start with the artifact name followed by a dash
-            # e.g., "clojure-1.12.0.jar" matches artifact "clojure"
-            excluded_artifact_prefixes.add(f"{artifact}-")
+            excluded_artifact_prefixes.add(f"{group}_{artifact}_")
 
         # Extract and add all dependency JARs (except provided ones)
         for file_content in digest_contents:
