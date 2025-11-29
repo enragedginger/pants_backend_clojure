@@ -132,7 +132,7 @@ def parse_lock_file(lock_content: str) -> list[LockFileEntry]:
 def format_deps_edn_deps(entries: list[LockFileEntry]) -> str:
     """Format lock file entries as deps.edn :deps map.
 
-    Each dependency includes :exclusions [*] to prevent transitive resolution,
+    Each dependency includes :exclusions [*/*] to prevent transitive resolution,
     since Pants lock files already have all transitives flattened.
 
     Defensively deduplicates entries by (group, artifact) - if duplicates exist,
@@ -151,7 +151,7 @@ def format_deps_edn_deps(entries: list[LockFileEntry]) -> str:
     dep_lines = []
     for entry in seen.values():
         dep_key = f"{entry.group}/{entry.artifact}"
-        dep_value = f'{{:mvn/version "{entry.version}" :exclusions [*]}}'
+        dep_value = f'{{:mvn/version "{entry.version}" :exclusions [*/*]}}'
         dep_lines.append(f"   {dep_key} {dep_value}")
 
     # Sort for consistent output ordering
@@ -300,7 +300,7 @@ def format_deps_edn(
     else:
         paths_str = "[]"
 
-    # Format :deps (dependencies with :exclusions [*])
+    # Format :deps (dependencies with :exclusions [*/*])
     deps_str = format_deps_edn_deps(deps_entries)
 
     # Format :aliases
@@ -317,12 +317,12 @@ def format_deps_edn(
 
     # Add nREPL alias
     aliases_content.append(
-        '  :nrepl {:extra-deps {nrepl/nrepl {:mvn/version "1.4.0" :exclusions [*]}}}'
+        '  :nrepl {:extra-deps {nrepl/nrepl {:mvn/version "1.4.0" :exclusions [*/*]}}}'
     )
 
     # Add rebel-readline alias
     aliases_content.append(
-        '  :rebel {:extra-deps {com.bhauman/rebel-readline {:mvn/version "0.1.4" :exclusions [*]}}}'
+        '  :rebel {:extra-deps {com.bhauman/rebel-readline {:mvn/version "0.1.4" :exclusions [*/*]}}}'
     )
 
     aliases_str = "{\n" + "\n".join(aliases_content) + "}"

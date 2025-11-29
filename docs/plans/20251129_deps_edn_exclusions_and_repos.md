@@ -50,7 +50,7 @@ Access in Pants rules via `CoursierSubsystem.repos` property (returns a tuple of
 
 ## Implementation Plan
 
-### Phase 1: Fix Exclusions Format
+### Phase 1: Fix Exclusions Format [DONE]
 
 **File**: `pants-plugins/clojure_backend/goals/generate_deps.py`
 

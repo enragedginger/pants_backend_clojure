@@ -233,11 +233,11 @@ def test_format_deps_edn_deps() -> None:
     assert result.endswith("}")
 
     # Check content (order is alphabetical by group/artifact)
-    assert 'com.google.guava/guava {:mvn/version "33.0.0-jre" :exclusions [*]}' in result
-    assert 'org.clojure/clojure {:mvn/version "1.12.0" :exclusions [*]}' in result
+    assert 'com.google.guava/guava {:mvn/version "33.0.0-jre" :exclusions [*/*]}' in result
+    assert 'org.clojure/clojure {:mvn/version "1.12.0" :exclusions [*/*]}' in result
 
-    # Verify :exclusions [*] is present
-    assert ":exclusions [*]" in result
+    # Verify :exclusions [*/*] is present
+    assert ":exclusions [*/*]" in result
 
 
 def test_format_deps_edn_deps_empty() -> None:
@@ -350,7 +350,7 @@ def test_format_deps_edn_complete() -> None:
     assert 'com.bhauman/rebel-readline {:mvn/version "0.1.4"' in result
 
     # Check dependency format
-    assert 'org.clojure/clojure {:mvn/version "1.12.0" :exclusions [*]}' in result
+    assert 'org.clojure/clojure {:mvn/version "1.12.0" :exclusions [*/*]}' in result
 
 
 def test_format_deps_edn_no_test_paths() -> None:
@@ -630,7 +630,7 @@ def test_format_deps_edn_deps_special_characters() -> None:
 
     result = format_deps_edn_deps(entries)
 
-    assert 'com.example/lib {:mvn/version "1.0.0-alpha+build.123" :exclusions [*]}' in result
+    assert 'com.example/lib {:mvn/version "1.0.0-alpha+build.123" :exclusions [*/*]}' in result
 
 
 def test_generate_deps_edn_nested_source_dirs(rule_runner: RuleRunner) -> None:

@@ -44,18 +44,18 @@ All Clojure source directories for the specified resolve:
 
 ### 2. Third-Party Dependencies (`:deps`)
 
-All dependencies from the lock file, with `:exclusions [*]` to prevent re-resolution:
+All dependencies from the lock file, with `:exclusions [*/*]` to prevent re-resolution:
 
 ```clojure
-{:deps {org.clojure/clojure {:mvn/version "1.12.0" :exclusions [*]}
-        com.google.guava/guava {:mvn/version "33.0.0-jre" :exclusions [*]}
+{:deps {org.clojure/clojure {:mvn/version "1.12.0" :exclusions [*/*]}
+        com.google.guava/guava {:mvn/version "33.0.0-jre" :exclusions [*/*]}
         ...}
  ...}
 ```
 
-**Why `:exclusions [*]`?**
+**Why `:exclusions [*/*]`?**
 
-Pants lock files are fully resolved with all transitive dependencies flattened. The `:exclusions [*]` prevents `clj` from re-resolving transitives, ensuring exact version matching with Pants.
+Pants lock files are fully resolved with all transitive dependencies flattened. The `:exclusions [*/*]` (a wildcard qualified symbol matching all group/artifact pairs) prevents `clj` from re-resolving transitives, ensuring exact version matching with Pants.
 
 ### 3. Aliases (`:aliases`)
 
@@ -64,8 +64,8 @@ Pre-configured aliases for common workflows:
 ```clojure
 {:aliases {:test {:extra-paths ["projects/example/project-a/test"
                                  "projects/example/project-b/test"]}
-           :nrepl {:extra-deps {nrepl/nrepl {:mvn/version "1.4.0" :exclusions [*]}}}
-           :rebel {:extra-deps {com.bhauman/rebel-readline {:mvn/version "0.1.4" :exclusions [*]}}}}}
+           :nrepl {:extra-deps {nrepl/nrepl {:mvn/version "1.4.0" :exclusions [*/*]}}}
+           :rebel {:extra-deps {com.bhauman/rebel-readline {:mvn/version "0.1.4" :exclusions [*/*]}}}}}
 ```
 
 ## Options
@@ -215,7 +215,7 @@ java21 = "locks/jvm/java21.lock.jsonc"
 
 **Symptom**: Different version at runtime than expected
 
-**Cause**: `clj` re-resolved transitive dependencies (`:exclusions [*]` was removed)
+**Cause**: `clj` re-resolved transitive dependencies (`:exclusions [*/*]` was removed)
 
 **Solution**: Regenerate deps.edn - don't manually edit dependency declarations
 
