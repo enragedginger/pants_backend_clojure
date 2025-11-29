@@ -768,3 +768,176 @@ def test_provided_jvm_artifact_excluded_from_jar(rule_runner: RuleRunner) -> Non
     jsr305_entries = [entry for entry in jar_entries if 'javax/annotation' in entry]
     assert len(jsr305_entries) == 0, \
         f"Provided jvm_artifact jsr305 should NOT be in JAR, but found: {jsr305_entries}"
+
+
+# Lockfile with Clojure and its transitive dependencies (spec.alpha, core.specs.alpha)
+# Used to verify that Maven transitives are excluded from the JAR
+LOCKFILE_WITH_CLOJURE = """\
+# --- BEGIN PANTS LOCKFILE METADATA: DO NOT EDIT OR REMOVE ---
+# {
+#   "version": 1,
+#   "generated_with_requirements": [
+#     "org.clojure:clojure:1.11.0,url=not_provided,jar=not_provided"
+#   ]
+# }
+# --- END PANTS LOCKFILE METADATA ---
+
+[[entries]]
+file_name = "org.clojure_clojure_1.11.0.jar"
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "core.specs.alpha"
+version = "0.2.62"
+packaging = "jar"
+
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "spec.alpha"
+version = "0.3.218"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "core.specs.alpha"
+version = "0.2.62"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "spec.alpha"
+version = "0.3.218"
+packaging = "jar"
+
+
+[entries.coord]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.11.0"
+packaging = "jar"
+[entries.file_digest]
+fingerprint = "3e21fa75a07ec9ddbbf1b2b50356cf180710d0398deaa4f44e91cd6304555947"
+serialized_bytes_length = 4105010
+
+[[entries]]
+file_name = "org.clojure_core.specs.alpha_0.2.62.jar"
+directDependencies = []
+dependencies = []
+
+[entries.coord]
+group = "org.clojure"
+artifact = "core.specs.alpha"
+version = "0.2.62"
+packaging = "jar"
+[entries.file_digest]
+fingerprint = "06eea8c070bbe45c158567e443439681bc8c46e9123414f81bfa32ba42d6cbc8"
+serialized_bytes_length = 4325
+
+[[entries]]
+file_name = "org.clojure_spec.alpha_0.3.218.jar"
+directDependencies = []
+dependencies = []
+
+[entries.coord]
+group = "org.clojure"
+artifact = "spec.alpha"
+version = "0.3.218"
+packaging = "jar"
+[entries.file_digest]
+fingerprint = "67ec898eb55c66a957a55279dd85d1376bb994bd87668b2b0de1eb3b97e8aae0"
+serialized_bytes_length = 635617
+"""
+
+
+def test_provided_maven_transitives_excluded_from_jar(rule_runner: RuleRunner) -> None:
+    """Test that Maven transitive dependencies of provided artifacts are excluded from JAR.
+
+    This is the key integration test for the Maven transitive exclusion feature.
+    When org.clojure:clojure is marked as provided, its transitive dependencies
+    (spec.alpha, core.specs.alpha) should also be excluded from the final JAR.
+    """
+    import io
+    import zipfile
+
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE,
+            "3rdparty/jvm/BUILD": dedent(
+                """\
+                jvm_artifact(
+                    name="clojure",
+                    group="org.clojure",
+                    artifact="clojure",
+                    version="1.11.0",
+                )
+                """
+            ),
+            "src/app/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["//3rdparty/jvm:clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="app.core",
+                    dependencies=[":core", "//3rdparty/jvm:clojure"],
+                    provided=["//3rdparty/jvm:clojure"],
+                )
+                """
+            ),
+            "src/app/core.clj": dedent(
+                """\
+                (ns app.core
+                  (:gen-class))
+
+                (defn -main [& args]
+                  (println "Hello"))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/app", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    # Package the JAR
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+    # Read the JAR and check its contents
+    jar_path = result.artifacts[0].relpath
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None, f"Could not find JAR file {jar_path} in digest"
+
+    # Parse the JAR and check what classes are included
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        jar_entries = set(jar.namelist())
+
+    # The main app classes should be present
+    assert any('app/core' in entry for entry in jar_entries), \
+        "Main app.core classes should be in JAR"
+
+    # The provided jvm_artifact (clojure) classes should NOT be present
+    clojure_entries = [entry for entry in jar_entries if entry.startswith('clojure/')]
+    assert len(clojure_entries) == 0, \
+        f"Provided jvm_artifact org.clojure:clojure should NOT be in JAR, but found: {clojure_entries[:10]}"
+
+    # MOST IMPORTANT: The TRANSITIVE dependencies should also NOT be present!
+    # spec.alpha contains clojure/spec/alpha classes
+    spec_alpha_entries = [entry for entry in jar_entries if 'clojure/spec/alpha' in entry]
+    assert len(spec_alpha_entries) == 0, \
+        f"Transitive dep spec.alpha should NOT be in JAR, but found: {spec_alpha_entries[:10]}"
+
+    # core.specs.alpha contains clojure/core/specs/alpha classes
+    core_specs_entries = [entry for entry in jar_entries if 'clojure/core/specs/alpha' in entry]
+    assert len(core_specs_entries) == 0, \
+        f"Transitive dep core.specs.alpha should NOT be in JAR, but found: {core_specs_entries[:10]}"

@@ -29,6 +29,7 @@ from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest, JvmProcess
 from pants.jvm.package.deploy_jar import (
     DeployJarFieldSet,
 )
+from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmJdkField, JvmResolveField
 from pants.util.logging import LogLevel
 
@@ -36,7 +37,10 @@ from clojure_backend.aot_compile import (
     CompileClojureAOTRequest,
     CompiledClojureClasses,
 )
-from clojure_backend.provided_dependencies import ProvidedDependencies
+from clojure_backend.provided_dependencies import (
+    ProvidedDependencies,
+    ResolveProvidedDependenciesRequest,
+)
 from clojure_backend.target_types import (
     ClojureAOTNamespacesField,
     ClojureProvidedDependenciesField,
@@ -68,6 +72,7 @@ class ClojureDeployJarFieldSet(PackageFieldSet):
 @rule(desc="Package Clojure deploy jar", level=LogLevel.DEBUG)
 async def package_clojure_deploy_jar(
     field_set: ClojureDeployJarFieldSet,
+    jvm: JvmSubsystem,
 ) -> BuiltPackage:
     """Package a Clojure application into an executable JAR with AOT compilation.
 
@@ -192,10 +197,11 @@ async def package_clojure_deploy_jar(
     jdk_request = JdkRequest.from_field(field_set.jdk)
 
     # Get provided dependencies to exclude from the JAR
+    # Pass the resolve name so Maven transitives can be looked up in the lockfile
+    resolve_name = field_set.resolve.normalized_value(jvm)
     provided_deps = await Get(
         ProvidedDependencies,
-        ClojureProvidedDependenciesField,
-        field_set.provided,
+        ResolveProvidedDependenciesRequest(field_set.provided, resolve_name),
     )
 
     # Build full address set for AOT compilation (includes everything)

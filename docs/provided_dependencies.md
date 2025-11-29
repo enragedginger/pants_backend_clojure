@@ -73,9 +73,14 @@ This is particularly useful when:
 
 ### Transitive Exclusion
 
-When you mark a dependency as provided, **all of its transitive dependencies are also excluded** from the JAR. This ensures consistency - if library A depends on library B, and you exclude A, then B will also be excluded.
+When you mark a dependency as provided, **all of its transitive dependencies are also excluded** from the JAR. This includes:
 
-**Example**:
+1. **Pants target graph transitives**: First-party sources and `jvm_artifact` targets that are explicit dependencies of the provided target
+2. **Maven lockfile transitives**: Dependencies that are resolved by Coursier and stored in the lockfile, even if they don't have explicit Pants targets
+
+This is particularly important for large libraries like Apache Spark or Rama that bring in dozens or hundreds of transitive Maven dependencies. Without Maven transitive exclusion, only the direct artifact would be excluded, leaving all its dependencies bundled in the JAR.
+
+**Example - Simple transitive**:
 ```python
 # If servlet-api depends on commons-logging
 jvm_artifact(
@@ -93,6 +98,30 @@ clojure_deploy_jar(
 )
 # Result: Both servlet-api AND commons-logging are excluded from the JAR
 ```
+
+**Example - Large library with many transitives**:
+```python
+# Guava has many transitive dependencies (jsr305, failureaccess, error_prone_annotations, etc.)
+jvm_artifact(
+    name="guava",
+    group="com.google.guava",
+    artifact="guava",
+    version="31.1-jre",
+)
+
+clojure_deploy_jar(
+    name="app",
+    main="my.app",
+    dependencies=[":guava"],
+    provided=[":guava"],
+)
+# Result: Guava AND all its Maven transitives (jsr305, failureaccess, etc.) are excluded
+# These transitives are looked up automatically from the lockfile
+```
+
+**How it works**:
+
+The provided dependencies system uses the Coursier lockfile to determine the full transitive closure of Maven dependencies. When Pants generates the lockfile (`pants generate-lockfiles`), Coursier pre-computes the complete list of transitive dependencies for each artifact. The `provided` feature uses this pre-computed closure to exclude all transitive dependencies without needing to traverse the dependency graph at package time.
 
 ### AOT Compilation
 

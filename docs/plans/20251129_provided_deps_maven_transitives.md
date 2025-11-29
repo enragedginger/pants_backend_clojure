@@ -116,7 +116,7 @@ Enhance `resolve_provided_dependencies` to:
 
 ## Implementation Plan
 
-### Phase 1: Create Request Type and Lockfile Helper
+### Phase 1: Create Request Type and Lockfile Helper ✅ DONE
 
 **Goal:** Define a request type that carries the resolve name, and create the lockfile helper function
 
@@ -156,7 +156,7 @@ Enhance `resolve_provided_dependencies` to:
 
 **Testing:** Unit tests for the helper function with mock lockfile entries
 
-### Phase 2: Update resolve_provided_dependencies Rule
+### Phase 2: Update resolve_provided_dependencies Rule ✅ DONE
 
 **Goal:** Integrate lockfile lookup into the existing rule
 
@@ -191,7 +191,7 @@ Enhance `resolve_provided_dependencies` to:
 
 4. Return expanded coordinates in `ProvidedDependencies`
 
-### Phase 2b: Update Caller in package.py
+### Phase 2b: Update Caller in package.py ✅ DONE
 
 **Goal:** Update the JAR packaging code to create the request with resolve name
 
@@ -214,7 +214,7 @@ Enhance `resolve_provided_dependencies` to:
 
 This ensures the rule has access to the correct resolve without needing to infer it from targets.
 
-### Phase 3: Add Unit Tests
+### Phase 3: Add Unit Tests ✅ DONE
 
 **Goal:** Comprehensive test coverage for Maven transitive resolution
 
@@ -232,7 +232,7 @@ This ensures the rule has access to the correct resolve without needing to infer
 - Create mock lockfiles with known dependency structures
 - Verify that `ProvidedDependencies.coordinates` contains all expected transitives
 
-### Phase 4: Integration Testing
+### Phase 4: Integration Testing ✅ DONE
 
 **Goal:** Verify end-to-end JAR packaging excludes Maven transitives
 
@@ -249,7 +249,7 @@ This ensures the rule has access to the correct resolve without needing to infer
 - Pick an artifact like `guava` that has well-known transitives
 - Inspect the JAR contents to verify exclusion
 
-### Phase 5: Documentation Update
+### Phase 5: Documentation Update ✅ DONE
 
 **Goal:** Update help text and documentation
 
