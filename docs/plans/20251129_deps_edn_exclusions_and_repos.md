@@ -74,7 +74,7 @@ Access in Pants rules via `CoursierSubsystem.repos` property (returns a tuple of
 
 5. Update documentation examples showing `:exclusions [*]` to use `:exclusions [*/*]`
 
-### Phase 2: Add Repository Support
+### Phase 2: Add Repository Support [DONE]
 
 **File**: `pants-plugins/clojure_backend/goals/generate_deps.py`
 

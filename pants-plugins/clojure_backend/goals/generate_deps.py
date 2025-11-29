@@ -17,6 +17,7 @@ from pants.engine.goal import Goal, GoalSubsystem
 from pants.engine.internals.selectors import Get, MultiGet
 from pants.engine.rules import collect_rules, goal_rule
 from pants.engine.target import AllTargets
+from pants.jvm.resolve.coursier_setup import CoursierSubsystem
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmResolveField
 from pants.option.option_types import StrOption
@@ -160,6 +161,48 @@ def format_deps_edn_deps(entries: list[LockFileEntry]) -> str:
     return "{\n" + "\n".join(dep_lines) + "}"
 
 
+def _repo_name_from_url(url: str) -> str:
+    """Generate a reasonable repo name from URL."""
+    if "clojars" in url.lower():
+        return "clojars"
+    if "maven-central" in url.lower() or "repo1.maven.org" in url.lower():
+        return "central"
+    # Generate name from hostname
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    hostname = parsed.netloc or "repo"
+    return hostname.replace(".", "-").replace(":", "-")
+
+
+def format_mvn_repos(repos: tuple[str, ...] | list[str]) -> str:
+    """Format repository URLs as deps.edn :mvn/repos map.
+
+    Generates unique names for each repository, handling collisions
+    by appending numeric suffixes when needed.
+    """
+    if not repos:
+        return "{}"
+
+    seen_names: dict[str, int] = {}
+    repo_entries = []
+
+    for url in repos:
+        base_name = _repo_name_from_url(url)
+
+        # Handle name collisions by appending index
+        if base_name in seen_names:
+            seen_names[base_name] += 1
+            name = f"{base_name}-{seen_names[base_name]}"
+        else:
+            seen_names[base_name] = 0
+            name = base_name
+
+        repo_entries.append(f'   "{name}" {{:url "{url}"}}')
+
+    return "{\n" + "\n".join(repo_entries) + "}"
+
+
 def determine_source_root(file_path: str, source_content: str) -> str | None:
     """Determine the source root directory for a Clojure file.
 
@@ -290,6 +333,7 @@ def format_deps_edn(
     sources_info: ClojureSourcesInfo,
     deps_entries: list[LockFileEntry],
     resolve_name: str,
+    repos: tuple[str, ...] | list[str] | None = None,
 ) -> str:
     """Format complete deps.edn file content."""
 
@@ -302,6 +346,12 @@ def format_deps_edn(
 
     # Format :deps (dependencies with :exclusions [*/*])
     deps_str = format_deps_edn_deps(deps_entries)
+
+    # Format :mvn/repos (if repos are configured)
+    repos_section = ""
+    if repos:
+        repos_str = format_mvn_repos(repos)
+        repos_section = f"\n :mvn/repos {repos_str}\n"
 
     # Format :aliases
     test_paths = sorted(sources_info.test_paths)
@@ -339,7 +389,7 @@ def format_deps_edn(
 {{:paths {paths_str}
 
  :deps {deps_str}
-
+{repos_section}
  :aliases {aliases_str}}}
 """
 
@@ -353,6 +403,7 @@ async def generate_deps_edn_goal(
     subsystem: GenerateDepsEdnSubsystem,
     all_targets: AllTargets,
     jvm: JvmSubsystem,
+    coursier: CoursierSubsystem,
 ) -> GenerateDepsEdn:
     """Generate a deps.edn file for IDE integration."""
 
@@ -406,7 +457,9 @@ async def generate_deps_edn_goal(
     )
 
     # Format deps.edn content
-    deps_edn_content = format_deps_edn(sources_info, lock_entries, resolve_name)
+    deps_edn_content = format_deps_edn(
+        sources_info, lock_entries, resolve_name, repos=coursier.repos
+    )
 
     # Write to file
     output_path = subsystem.output_path

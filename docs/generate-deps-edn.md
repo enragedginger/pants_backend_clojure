@@ -57,7 +57,36 @@ All dependencies from the lock file, with `:exclusions [*/*]` to prevent re-reso
 
 Pants lock files are fully resolved with all transitive dependencies flattened. The `:exclusions [*/*]` (a wildcard qualified symbol matching all group/artifact pairs) prevents `clj` from re-resolving transitives, ensuring exact version matching with Pants.
 
-### 3. Aliases (`:aliases`)
+### 3. Maven Repositories (`:mvn/repos`)
+
+Repository URLs from your `[coursier]` configuration are passed through to the generated deps.edn:
+
+```clojure
+{:mvn/repos {"clojars" {:url "https://repo.clojars.org/"}
+             "central" {:url "https://maven-central.storage-download.googleapis.com/maven2"}
+             "central-1" {:url "https://repo1.maven.org/maven2"}}}
+```
+
+**How repo names are derived:**
+- URLs containing "clojars" → `"clojars"`
+- URLs containing "maven-central" or "repo1.maven.org" → `"central"`
+- Other URLs → hostname with dots/colons replaced by dashes (e.g., `"my-company-jfrog-io"`)
+- Duplicate names get numeric suffixes (e.g., `"central"`, `"central-1"`)
+
+**Configuration:**
+
+Configure repositories in your `pants.toml`:
+
+```toml
+[coursier]
+repos = [
+  "https://repo.clojars.org/",
+  "https://maven-central.storage-download.googleapis.com/maven2",
+  "https://repo1.maven.org/maven2",
+]
+```
+
+### 4. Aliases (`:aliases`)
 
 Pre-configured aliases for common workflows:
 

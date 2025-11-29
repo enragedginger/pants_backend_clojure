@@ -7,8 +7,10 @@ import pytest
 from clojure_backend.goals.generate_deps import (
     GenerateDepsEdn,
     LockFileEntry,
+    _repo_name_from_url,
     format_deps_edn,
     format_deps_edn_deps,
+    format_mvn_repos,
     parse_lock_file,
 )
 from clojure_backend.goals.generate_deps import rules as generate_deps_edn_rules
@@ -392,6 +394,116 @@ def test_format_deps_edn_no_source_paths() -> None:
     # Should have :test alias with test paths
     assert ":test" in result
     assert "test" in result
+
+
+def test_repo_name_from_url_clojars() -> None:
+    """Test that Clojars URLs get 'clojars' name."""
+    assert _repo_name_from_url("https://repo.clojars.org/") == "clojars"
+    assert _repo_name_from_url("https://clojars.org/repo/") == "clojars"
+    assert _repo_name_from_url("http://CLOJARS.org/") == "clojars"
+
+
+def test_repo_name_from_url_central() -> None:
+    """Test that Maven Central URLs get 'central' name."""
+    assert _repo_name_from_url("https://repo1.maven.org/maven2") == "central"
+    assert _repo_name_from_url("https://maven-central.storage-download.googleapis.com/maven2") == "central"
+    assert _repo_name_from_url("https://REPO1.MAVEN.ORG/maven2/") == "central"
+
+
+def test_repo_name_from_url_custom() -> None:
+    """Test that custom repo URLs use hostname."""
+    assert _repo_name_from_url("https://my-company.jfrog.io/artifactory/") == "my-company-jfrog-io"
+    assert _repo_name_from_url("https://nexus.example.com:8081/repository/maven/") == "nexus-example-com-8081"
+
+
+def test_format_mvn_repos_empty() -> None:
+    """Test that empty repos list returns empty map."""
+    assert format_mvn_repos([]) == "{}"
+    assert format_mvn_repos(()) == "{}"
+
+
+def test_format_mvn_repos_single() -> None:
+    """Test formatting a single repository."""
+    repos = ["https://repo.clojars.org/"]
+    result = format_mvn_repos(repos)
+
+    assert '"clojars"' in result
+    assert ':url "https://repo.clojars.org/"' in result
+
+
+def test_format_mvn_repos_multiple() -> None:
+    """Test formatting multiple repositories."""
+    repos = [
+        "https://repo.clojars.org/",
+        "https://repo1.maven.org/maven2",
+    ]
+    result = format_mvn_repos(repos)
+
+    assert '"clojars"' in result
+    assert '"central"' in result
+    assert ':url "https://repo.clojars.org/"' in result
+    assert ':url "https://repo1.maven.org/maven2"' in result
+
+
+def test_format_mvn_repos_collision_handling() -> None:
+    """Test that duplicate repo names get unique suffixes."""
+    repos = [
+        "https://repo1.maven.org/maven2",
+        "https://maven-central.storage-download.googleapis.com/maven2",
+    ]
+    result = format_mvn_repos(repos)
+
+    # First central gets "central", second gets "central-1"
+    assert '"central"' in result
+    assert '"central-1"' in result
+
+
+def test_format_deps_edn_with_repos() -> None:
+    """Test formatting deps.edn with repository configuration."""
+    from clojure_backend.goals.generate_deps import ClojureSourcesInfo
+
+    sources_info = ClojureSourcesInfo(
+        source_paths={"src"},
+        test_paths=set(),
+    )
+
+    deps_entries = [
+        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.0"),
+    ]
+
+    repos = (
+        "https://repo.clojars.org/",
+        "https://repo1.maven.org/maven2",
+    )
+
+    result = format_deps_edn(sources_info, deps_entries, "java21", repos=repos)
+
+    # Check :mvn/repos section is present
+    assert ":mvn/repos" in result
+    assert '"clojars"' in result
+    assert '"central"' in result
+    assert ':url "https://repo.clojars.org/"' in result
+    assert ':url "https://repo1.maven.org/maven2"' in result
+
+
+def test_format_deps_edn_no_repos() -> None:
+    """Test that :mvn/repos is omitted when repos is None or empty."""
+    from clojure_backend.goals.generate_deps import ClojureSourcesInfo
+
+    sources_info = ClojureSourcesInfo(
+        source_paths={"src"},
+        test_paths=set(),
+    )
+
+    deps_entries = []
+
+    # Test with None
+    result = format_deps_edn(sources_info, deps_entries, "java21", repos=None)
+    assert ":mvn/repos" not in result
+
+    # Test with empty list
+    result = format_deps_edn(sources_info, deps_entries, "java21", repos=[])
+    assert ":mvn/repos" not in result
 
 
 def test_lock_file_entry_defaults() -> None:
