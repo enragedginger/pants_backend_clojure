@@ -1,5 +1,11 @@
 # Plan: Fix `clojure_source` -> `jvm_artifact(clojure)` Dependency Hang
 
+## Status: BLOCKED - Original Plan Does Not Work
+
+**Update (2024-12-02):** Implementation of the original plan (Option B - isolated tool classpath via `extra_immutable_input_digests`) was attempted but **does not solve the hang**. The issue is deeper than digest merging - it occurs during the Pants scheduler's Coursier resolution phase. See "Investigation Findings" section below for details.
+
+---
+
 ## Problem Summary
 
 When a `clojure_source` target directly depends on a `jvm_artifact` for `org.clojure:clojure`, the Pants scheduler hangs indefinitely. This happens because:
@@ -11,268 +17,316 @@ When a `clojure_source` target directly depends on a `jvm_artifact` for `org.clo
 
 This is a real limitation because in production Clojure projects, it's common and reasonable for `clojure_source` targets to depend on `org.clojure:clojure` (e.g., to access specific Clojure features or ensure version compatibility).
 
-## Root Cause Analysis
+---
 
-The conflict occurs because Clojure is being requested through two different Pants mechanisms simultaneously:
-- Via user dependency graph → `classpath_get()` → Coursier resolution with lockfile
-- Via tool request → `ToolClasspathRequest` → Coursier resolution without lockfile context
+## Investigation Findings (2024-12-02)
 
-The Pants engine cannot determine which Clojure version/resolution to use, leading to a scheduler deadlock.
+### What Was Attempted
 
-## Solution Options Considered
+The original plan proposed using `extra_immutable_input_digests` to isolate tool and user classpaths, following the Scala backend pattern. Changes were made to:
 
-### Option A: Use User's Clojure Only (Like Test Runner)
+1. `aot_compile.py` - Use `extra_immutable_input_digests` for tool classpath, use `classpath.immutable_inputs()` for user classpath
+2. `check.py` - Same pattern as above
+3. `test_package_clojure_deploy_jar.py` - Update test to have `clojure_source` depend on `jvm_artifact(clojure)`
 
-The test runner (`test.py`) doesn't fetch Clojure via `ToolClasspathRequest` - it relies on Clojure being in the user's classpath. Could we do the same for AOT compilation?
+**Result:** The test still hangs indefinitely.
 
-**Why this won't work:**
-- AOT compilation and check goal need Clojure to be available to run `clojure.main`
-- If a `clojure_source` doesn't have Clojure in its dependencies, compilation would fail
-- This would require all `clojure_source` targets to explicitly depend on `jvm_artifact(clojure)`, which is poor UX
-- The test runner works because tests typically depend on code that eventually depends on Clojure
+### Why the Original Plan Fails
 
-### Option B: Use Isolated Tool Classpath (Scala Pattern) ✓ Selected
+The `extra_immutable_input_digests` pattern only prevents **digest merging conflicts** at the process execution level. However, the hang occurs **earlier** during the Pants scheduler's **Coursier resolution phase**.
 
-The Scala backend handles this exact problem by using `extra_immutable_input_digests` with directory prefixes to keep tool and user classpaths separate. `JvmProcess` in Pants supports this via the `extra_immutable_input_digests` parameter.
+#### The Actual Root Cause
 
-**Why this works:**
-- Tool Clojure is kept in a separate directory (`__toolcp/`)
-- User classpath uses the default path or a different prefix
-- No digest merging conflict occurs because they're in separate filesystem locations
-- The Pants scheduler sees them as unrelated operations
+When both paths try to fetch `org.clojure:clojure`:
 
-## Implementation Plan
+**Path 1: User Classpath Resolution**
+- `classpath_get()` → `select_coursier_resolve_for_targets()` → loads user's lockfile
+- Calls `coursier_fetch_one_coord()` with a `CoursierLockfileEntry` that has `pants_address` set to the `jvm_artifact` target
 
-### Phase 1: Update AOT Compilation to Use Isolated Tool Classpath
+**Path 2: Tool Classpath Resolution**
+- `ToolClasspathRequest(artifact_requirements=...)` → `coursier_resolve_lockfile()` → creates fresh lockfile entries
+- Calls `coursier_fetch_one_coord()` with a `CoursierLockfileEntry` that has NO `pants_address`
 
-**Files to modify:**
-- `pants-plugins/clojure_backend/aot_compile.py`
+The **cache key** for `coursier_fetch_one_coord()` is based on the entire `CoursierLockfileEntry` object, which includes `pants_address`. This means:
 
-**Changes:**
+1. Two **different** cache keys are created for the **same** coordinate
+2. Both requests trigger separate `coursier_fetch_one_coord()` calls
+3. The scheduler encounters a conflict or cycle when trying to resolve both
 
-1. Use `extra_immutable_input_digests` to keep tool classpath separate from `input_digest`
-2. Add a directory prefix for the tool classpath entries
-3. Remove `clojure_classpath.digest` from the `MergeDigests` call
+#### Evidence from Pants Codebase
 
-**Current problematic code:**
+From `/Users/hopper/workspace/python/pants/src/python/pants/jvm/resolve/coursier_fetch.py`:
+
+- Lines 551-642: `coursier_fetch_one_coord()` takes `CoursierLockfileEntry` as input
+- Lines 575-583: If `request.pants_address` is set, it tries to `resolve_targets()`
+- Lines 785-841: `materialize_classpath_for_tool()` creates entries without `pants_address`
+
+This creates a situation where:
+- User classpath fetch (with `pants_address`) may trigger target resolution
+- Tool classpath fetch (without `pants_address`) takes a different code path
+- Both are trying to fetch the same artifact, creating scheduler confusion
+
+### Why Scala Doesn't Have This Problem
+
+Looking at the Scala backend (`scalac.py`):
+
+1. Scala **does** use `ToolClasspathRequest(artifact_requirements=...)` for the compiler (line 159)
+2. However, Scala users typically **don't** have their `scala_source` targets explicitly depend on `jvm_artifact(scala-library)`
+3. Instead, Scala has **built-in dependency inference** that automatically injects `scala-library` into the dependency graph
+4. The injected dependency goes through a different code path that doesn't conflict
+
+For Clojure, we're explicitly allowing users to depend on `jvm_artifact(clojure)`, which creates the conflict.
+
+---
+
+## Revised Solution Options
+
+### Option A: Use Pre-Generated Lockfile for Clojure Tool (Recommended)
+
+Create a `ClojureSubsystem` that extends `JvmToolBase` and uses a pre-generated lockfile for the Clojure runtime, similar to how `scala_parser.lock` works.
+
+**How it works:**
 ```python
-# Line 137-146 - Merges tool digest directly with user classpath digest
-input_digest = await Get(
-    Digest,
-    MergeDigests([
-        stripped_sources.snapshot.digest,
-        *classpath.digests(),
-        clojure_classpath.digest,  # <-- This causes conflict
-        compile_script_digest,
-    ]),
+class ClojureSubsystem(JvmToolBase):
+    options_scope = "clojure"
+    help = "The Clojure runtime used for AOT compilation and checking."
+
+    default_version = "1.11.1"
+    default_artifacts = ("org.clojure:clojure:{version}",)
+    default_lockfile_resource = ("clojure_backend", "clojure.lock")
+```
+
+Then in `aot_compile.py`:
+```python
+clojure_classpath = await Get(
+    ToolClasspath,
+    ToolClasspathRequest(lockfile=GenerateJvmLockfileFromTool.create(clojure_subsystem)),
 )
 ```
 
-**Fixed code pattern:**
+**Pros:**
+- Uses Pants' established pattern for tool dependencies
+- Lockfile is resolved independently, avoiding the cache key conflict
+- Users can customize the Clojure version via `pants.toml`
+
+**Cons:**
+- Requires creating and maintaining a lockfile
+- More complex implementation
+- Lockfile needs to be regenerated when Clojure version changes
+
+### Option B: Don't Use ToolClasspathRequest - Rely on User's Classpath
+
+Remove `ToolClasspathRequest` entirely and require Clojure to be available in the user's classpath (similar to how `test.py` works).
+
+**How it works:**
 ```python
-# Define tool classpath prefix
-toolcp_relpath = "__toolcp"
+# In aot_compile.py - don't fetch Clojure separately
+# Just use what's in the user's classpath
+classpath = await classpath_get(**implicitly(request.source_addresses))
 
-# DON'T merge clojure_classpath.digest into input_digest
-input_digest = await Get(
-    Digest,
-    MergeDigests([
-        stripped_sources.snapshot.digest,
-        *classpath.digests(),
-        compile_script_digest,
-    ]),
-)
-
-# Build classpath with prefixed tool entries
+# Assume Clojure is already in classpath
 classpath_entries = [
     ".",
     classes_dir,
-    *classpath.args(),
-    *[f"{toolcp_relpath}/{entry}" for entry in clojure_classpath.classpath_entries()],
+    *classpath.immutable_inputs_args(prefix=usercp_relpath),
 ]
-
-# Pass tool classpath via extra_immutable_input_digests
-process = JvmProcess(
-    jdk=jdk,
-    classpath_entries=classpath_entries,
-    argv=["clojure.main", "__compile_script.clj"],
-    input_digest=input_digest,
-    extra_immutable_input_digests={toolcp_relpath: clojure_classpath.digest},  # <-- Key fix
-    # ... rest of parameters
-)
 ```
 
-### Phase 2: Update Check Goal to Use Isolated Tool Classpath
+**Pros:**
+- Simplest solution
+- No scheduler conflicts possible
+- User controls the Clojure version entirely
 
-**Files to modify:**
-- `pants-plugins/clojure_backend/goals/check.py`
+**Cons:**
+- AOT compilation fails if user hasn't included Clojure in dependencies
+- Poor UX - users must explicitly add `jvm_artifact(clojure)` to their deps
+- Error messages may be confusing ("clojure.main not found")
 
-**Changes:**
+### Option C: Automatic Dependency Injection (Like Scala)
 
-Apply the same pattern as Phase 1:
-1. Use `extra_immutable_input_digests` for tool classpath isolation
-2. Add directory prefix for tool classpath entries
-3. Remove `clojure_classpath.digest` from `MergeDigests`
+Add automatic dependency injection for Clojure, similar to how Scala handles `scala-library`.
 
-**Current problematic code (lines 174-183):**
+**How it works:**
+- Create an `InferClojureDependencyRequest` rule
+- Automatically inject `org.clojure:clojure` into every `clojure_source` target's dependencies
+- Use the injected dependency instead of `ToolClasspathRequest`
+
+**Pros:**
+- Matches how Scala works
+- Consistent user experience
+- No need for explicit Clojure dependency in BUILD files
+
+**Cons:**
+- Most complex implementation
+- Need to handle version conflicts
+- May inject unwanted dependencies
+
+### Option D: File Pants Bug / Upstream Fix
+
+The underlying issue is arguably a bug in Pants' scheduler - it shouldn't hang when the same artifact is requested through different paths.
+
+**Actions:**
+- File an issue on the Pants repository
+- Propose that `coursier_fetch_one_coord()` cache key should be based on coordinate only, not on `pants_address`
+- Wait for upstream fix
+
+**Pros:**
+- Fixes the root cause
+- Benefits all JVM backends
+
+**Cons:**
+- Depends on Pants maintainers
+- Timeline unknown
+- May take significant time
+
+---
+
+## Recommendation
+
+**Short term:** Implement **Option B** (rely on user's classpath) as a quick fix, but with good error messages that guide users to add Clojure to their dependencies.
+
+**Medium term:** Implement **Option A** (pre-generated lockfile) as the proper solution, following the pattern established by other Pants JVM tools.
+
+**Long term:** Consider **Option D** (upstream fix) to address the root cause.
+
+---
+
+## Implementation Plan for Option A (Pre-Generated Lockfile)
+
+### Phase 1: Create ClojureSubsystem
+
+**New file:** `pants-plugins/clojure_backend/subsystems/clojure.py`
+
 ```python
-input_digest = await Get(
-    Digest,
-    MergeDigests([
-        loader_digest,
-        stripped_sources.snapshot.digest,
-        *clspath.digests(),
-        clojure_classpath.digest,  # <-- This causes conflict
-    ])
-)
+from pants.jvm.resolve.jvm_tool import JvmToolBase
+
+class ClojureSubsystem(JvmToolBase):
+    options_scope = "clojure"
+    help = "The Clojure runtime used for AOT compilation and checking."
+
+    default_version = "1.11.1"
+    default_artifacts = ("org.clojure:clojure:{version}",)
+    default_lockfile_resource = ("clojure_backend", "clojure.lock")
+    default_lockfile_path = "pants-plugins/clojure_backend/clojure.lock"
+    default_lockfile_url = None  # We'll generate it locally
 ```
 
-**Fixed code pattern:**
-```python
-toolcp_relpath = "__toolcp"
+### Phase 2: Generate Lockfile
 
-input_digest = await Get(
-    Digest,
-    MergeDigests([
-        loader_digest,
-        stripped_sources.snapshot.digest,
-        *clspath.digests(),
-        # clojure_classpath.digest removed from here
-    ])
-)
-
-classpath_entries = [
-    ".",
-    *clspath.args(),
-    *[f"{toolcp_relpath}/{entry}" for entry in clojure_classpath.classpath_entries()],
-]
-
-jvm_process = JvmProcess(
-    jdk=jdk,
-    classpath_entries=classpath_entries,
-    argv=["clojure.main", "check_loader.clj"],
-    input_digest=input_digest,
-    extra_immutable_input_digests={toolcp_relpath: clojure_classpath.digest},  # <-- Key fix
-    # ... rest of parameters
-)
-```
-
-### Phase 3: Update Test to Verify the Fix
-
-**Files to modify:**
-- `pants-plugins/tests/test_package_clojure_deploy_jar.py`
-
-**Changes:**
-
-1. Update `test_provided_maven_transitives_excluded_from_jar` to have `clojure_source` depend on `jvm_artifact(clojure)` directly
-2. This restores the original test structure that was failing before the workaround
-
-**Current workaround structure (that avoids the hang):**
-```python
-clojure_source(
-    name="core",
-    source="core.clj",
-    # NO dependencies on :clojure - workaround
-)
-
-clojure_deploy_jar(
-    name="app",
-    main="app.core",
-    dependencies=[":core", ":clojure"],  # clojure_deploy_jar depends directly
-    provided=[":clojure"],
-)
-```
-
-**Restored test structure (that should now work):**
-```python
-clojure_source(
-    name="core",
-    source="core.clj",
-    dependencies=[":clojure"],  # Now this should work without hanging
-)
-
-clojure_deploy_jar(
-    name="app",
-    main="app.core",
-    dependencies=[":core"],
-    provided=[":clojure"],
-)
-```
-
-### Phase 4: Run Full Test Suite and Verify
-
-**Commands:**
+Run:
 ```bash
-# Run the previously hanging test
-pants test pants-plugins/tests/test_package_clojure_deploy_jar.py -- -v -k "test_provided_maven_transitives_excluded_from_jar"
-
-# Run all package tests
-pants test pants-plugins/tests/test_package_clojure_deploy_jar.py
-
-# Run full test suite
-pants test pants-plugins::
+pants generate-lockfiles --resolve=clojure
 ```
+
+This creates `pants-plugins/clojure_backend/clojure.lock` containing the resolved Clojure artifact.
+
+### Phase 3: Update AOT Compilation
+
+**File:** `pants-plugins/clojure_backend/aot_compile.py`
+
+```python
+from clojure_backend.subsystems.clojure import ClojureSubsystem
+from pants.jvm.resolve.jvm_tool import GenerateJvmLockfileFromTool
+
+@rule
+async def aot_compile_clojure(
+    request: CompileClojureAOTRequest,
+    clojure: ClojureSubsystem,  # Inject subsystem
+) -> CompiledClojureClasses:
+    # Use lockfile-based tool classpath
+    clojure_classpath = await Get(
+        ToolClasspath,
+        ToolClasspathRequest(lockfile=GenerateJvmLockfileFromTool.create(clojure)),
+    )
+    # ... rest of implementation
+```
+
+### Phase 4: Update Check Goal
+
+**File:** `pants-plugins/clojure_backend/goals/check.py`
+
+Same pattern as Phase 3.
+
+### Phase 5: Update Tests and Verify
+
+1. Restore the test to have `clojure_source` depend on `jvm_artifact(clojure)`
+2. Run full test suite
+3. Verify the hang is resolved
+
+---
+
+## Implementation Plan for Option B (Quick Fix)
+
+### Phase 1: Remove ToolClasspathRequest from AOT Compilation
+
+**File:** `pants-plugins/clojure_backend/aot_compile.py`
+
+Remove the `ToolClasspathRequest` and rely on user's classpath containing Clojure.
+
+### Phase 2: Remove ToolClasspathRequest from Check Goal
+
+**File:** `pants-plugins/clojure_backend/goals/check.py`
+
+Same as Phase 1.
+
+### Phase 3: Add Error Handling
+
+Add clear error messages when `clojure.main` is not found:
+
+```python
+if "clojure.main" not in classpath_entries:
+    raise ValueError(
+        "Clojure runtime not found in classpath. "
+        "Please ensure your clojure_source targets depend on a jvm_artifact "
+        "for org.clojure:clojure."
+    )
+```
+
+### Phase 4: Update Documentation
+
+Document that users must include Clojure in their dependencies for AOT compilation to work.
+
+---
 
 ## Files Summary
 
 | File | Action | Description |
 |------|--------|-------------|
-| `pants-plugins/clojure_backend/aot_compile.py` | Modify | Use `extra_immutable_input_digests` for tool classpath isolation |
-| `pants-plugins/clojure_backend/goals/check.py` | Modify | Use `extra_immutable_input_digests` for tool classpath isolation |
-| `pants-plugins/tests/test_package_clojure_deploy_jar.py` | Modify | Restore original test structure with `clojure_source` -> `clojure` dependency |
+| `pants-plugins/clojure_backend/subsystems/clojure.py` | Create (Option A) | ClojureSubsystem extending JvmToolBase |
+| `pants-plugins/clojure_backend/clojure.lock` | Generate (Option A) | Pre-generated lockfile for Clojure |
+| `pants-plugins/clojure_backend/aot_compile.py` | Modify | Use lockfile-based ToolClasspathRequest or remove it |
+| `pants-plugins/clojure_backend/goals/check.py` | Modify | Same as aot_compile.py |
+| `pants-plugins/clojure_backend/register.py` | Modify | Register ClojureSubsystem rules |
 
-## Technical Details
+---
 
-### Why `extra_immutable_input_digests` Solves the Problem
+## Original Plan (Archived - Does Not Work)
 
-The `JvmProcess` class (in `/Users/hopper/workspace/python/pants/src/python/pants/jvm/jdk_rules.py:321-371`) accepts an `extra_immutable_input_digests` parameter that allows placing digest contents in separate directory prefixes.
+<details>
+<summary>Click to expand original plan</summary>
 
-When we use:
-```python
-extra_immutable_input_digests={toolcp_relpath: clojure_classpath.digest}
-```
+### Option B: Use Isolated Tool Classpath (Scala Pattern) ~~✓ Selected~~ **DOES NOT WORK**
 
-The tool Clojure JAR files are materialized at `__toolcp/path/to/clojure.jar` rather than being merged into the main digest. This keeps them separate from any user-provided Clojure in the main classpath.
+The Scala backend handles this exact problem by using `extra_immutable_input_digests` with directory prefixes to keep tool and user classpaths separate. `JvmProcess` in Pants supports this via the `extra_immutable_input_digests` parameter.
 
-The classpath entries then reference these prefixed paths:
-```python
-*[f"{toolcp_relpath}/{entry}" for entry in clojure_classpath.classpath_entries()]
-```
+**Why this was expected to work:**
+- Tool Clojure is kept in a separate directory (`__toolcp/`)
+- User classpath uses the default path or a different prefix
+- No digest merging conflict occurs because they're in separate filesystem locations
+- The Pants scheduler sees them as unrelated operations
 
-### Why This is Different from Scala
+**Why it doesn't actually work:**
+- The hang occurs during **Coursier fetch**, not during **digest merging**
+- `extra_immutable_input_digests` only affects the process execution phase
+- By the time we get to digest merging, the scheduler has already hung
 
-The Scala backend also uses the `extra_immutable_input_digests` pattern, but with additional complexity:
-- It uses `-bootclasspath` for priority ordering
-- It has separate compiler and library JARs
-- It supports configurable versions per resolve via `ScalaSubsystem`
+</details>
 
-For Clojure, we only need the isolation aspect - Clojure has a single JAR that serves as both compiler and runtime. We don't need `-bootclasspath` or version configuration (though those could be added later as enhancements).
-
-### Future Enhancement: Configurable Clojure Version
-
-A potential future enhancement would be to add a `ClojureSubsystem` with `version_for_resolve()` method, similar to Scala. This would allow users to specify:
-
-```toml
-[clojure]
-version_for_resolve = { "jvm-default" = "1.12.0", "legacy" = "1.10.3" }
-```
-
-This is NOT required for the bug fix and can be done separately.
-
-## Risks and Mitigations
-
-### Risk 1: Breaking existing tests
-**Mitigation**: Run full test suite after each phase. The change is isolated to how digests are organized, not the actual compilation logic.
-
-### Risk 2: Tool Clojure version mismatch with user code
-**Mitigation**: The tool Clojure is only used for compilation/checking. The final JAR and runtime classpath will use the user's Clojure from their resolve. This matches how Clojure development typically works.
-
-### Risk 3: Performance impact
-**Mitigation**: The `extra_immutable_input_digests` pattern is well-tested in Scala and other backends. Digests are cached, so there's minimal overhead.
+---
 
 ## Success Criteria
 
 1. `test_provided_maven_transitives_excluded_from_jar` passes with `clojure_source` directly depending on `jvm_artifact(clojure)`
 2. All existing tests continue to pass
 3. Users can have `clojure_source` targets depend on `org.clojure:clojure` without scheduler hangs
-4. AOT compilation and check goal work correctly with the isolated tool classpath
+4. AOT compilation and check goal work correctly
