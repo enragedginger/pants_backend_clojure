@@ -30,6 +30,14 @@ repos = [
   "https://maven-central.storage-download.googleapis.com/maven2",
   "https://repo1.maven.org/maven2",
 ]
+# Pick up newer version of Coursier for bug fixes
+version = "v2.1.25-M19"
+known_versions = [
+  "v2.1.25-M19|macos_x86_64|86298db922051950acac686988b42ab7756359befe24f315ee72124c2b12b3c3|82018352",
+  "v2.1.25-M19|macos_arm64|7e5fc9510fa08c3f98eb36c5801e4d7605e3f4d3d6bc43fdcd47658dd56bb316|27061694|https://github.com/coursier/coursier/releases/download/v2.1.25-M19/cs-aarch64-apple-darwin.gz",
+  "v2.1.25-M19|linux_x86_64|87e98262e2d8c16e92f90d12be19ba9c450e61133c056d49c3f07dcfd5a70f6d|88322120",
+  "v2.1.25-M19|linux_arm64|a7bbad42163c4fde4cb1191ccfd11261c21873023c495ba7494ca109de4da761|85679032|https://github.com/coursier/coursier/releases/download/v2.1.25-M19/cs-aarch64-pc-linux.gz",
+]
 
 
 [jvm.resolves]
