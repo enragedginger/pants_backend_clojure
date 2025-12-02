@@ -61,7 +61,6 @@ async def aot_compile_clojure(
     5. Capture the generated .class files
     6. Return as a ClasspathEntry for deploy_jar
     """
-
     # Get JDK environment
     jdk_request = JdkRequest.from_field(request.jdk) if request.jdk else JdkRequest.SOURCE_DEFAULT
 

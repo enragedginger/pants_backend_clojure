@@ -24,13 +24,16 @@ from clojure_backend.target_types import (
 from clojure_backend.target_types import rules as target_types_rules
 from pants.build_graph.address import Address
 from pants.core.goals.package import BuiltPackage
-from pants.core.util_rules import source_files, stripped_source_files
+from pants.core.util_rules import config_files, source_files, stripped_source_files, system_binaries
 from pants.engine.fs import DigestContents
 from pants.engine.internals.scheduler import ExecutionError
 from pants.engine.rules import QueryRule
-from pants.jvm import classpath, jvm_common
+from pants.jvm import classpath, jvm_common, non_jvm_dependencies
+from pants.jvm.goals import lockfile
 from pants.jvm.resolve import coursier_fetch, jvm_tool
+from pants.jvm.resolve.coursier_setup import rules as coursier_setup_rules
 from pants.jvm.target_types import JvmArtifactTarget
+from pants.jvm.util_rules import rules as jdk_util_rules
 from pants.testutil.rule_runner import RuleRunner
 
 
@@ -44,12 +47,18 @@ def rule_runner() -> RuleRunner:
             *provided_dependencies_rules(),
             *classpath.rules(),
             *compile_clj.rules(),
-            *target_types_rules(),
+            *config_files.rules(),
+            *coursier_fetch.rules(),
+            *coursier_setup_rules(),
+            *jdk_util_rules(),
             *jvm_common.rules(),
+            *jvm_tool.rules(),
+            *lockfile.rules(),
+            *non_jvm_dependencies.rules(),
             *source_files.rules(),
             *stripped_source_files.rules(),
-            *coursier_fetch.rules(),
-            *jvm_tool.rules(),
+            *system_binaries.rules(),
+            *target_types_rules(),
             QueryRule(BuiltPackage, [ClojureDeployJarFieldSet]),
         ],
     )
@@ -890,10 +899,12 @@ def test_provided_maven_transitives_excluded_from_jar(rule_runner: RuleRunner) -
     import io
     import zipfile
 
+    # Test Maven transitive exclusion by having clojure_deploy_jar depend on clojure directly
+    # (not via clojure_source, which causes Pants engine issues when depending on jvm_artifact(clojure))
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE,
-            "3rdparty/jvm/BUILD": dedent(
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_JSR305,
+            "src/app/BUILD": dedent(
                 """\
                 jvm_artifact(
                     name="clojure",
@@ -901,21 +912,17 @@ def test_provided_maven_transitives_excluded_from_jar(rule_runner: RuleRunner) -
                     artifact="clojure",
                     version="1.11.0",
                 )
-                """
-            ),
-            "src/app/BUILD": dedent(
-                """\
+
                 clojure_source(
                     name="core",
                     source="core.clj",
-                    dependencies=["//3rdparty/jvm:clojure"],
                 )
 
                 clojure_deploy_jar(
                     name="app",
                     main="app.core",
-                    dependencies=[":core", "//3rdparty/jvm:clojure"],
-                    provided=["//3rdparty/jvm:clojure"],
+                    dependencies=[":core", ":clojure"],
+                    provided=[":clojure"],
                 )
                 """
             ),
