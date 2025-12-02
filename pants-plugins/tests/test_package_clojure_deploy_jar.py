@@ -820,8 +820,24 @@ serialized_bytes_length = 4105010
 
 [[entries]]
 file_name = "org.clojure_core.specs.alpha_0.2.62.jar"
-directDependencies = []
-dependencies = []
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.11.0"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.11.0"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "spec.alpha"
+version = "0.3.218"
+packaging = "jar"
+
 
 [entries.coord]
 group = "org.clojure"
@@ -834,8 +850,24 @@ serialized_bytes_length = 4325
 
 [[entries]]
 file_name = "org.clojure_spec.alpha_0.3.218.jar"
-directDependencies = []
-dependencies = []
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.11.0"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.11.0"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "core.specs.alpha"
+version = "0.2.62"
+packaging = "jar"
+
 
 [entries.coord]
 group = "org.clojure"
