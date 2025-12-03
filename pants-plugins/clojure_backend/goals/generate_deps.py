@@ -8,7 +8,7 @@ from pants.engine.console import Console
 from pants.engine.fs import (
     CreateDigest,
     Digest,
-    DigestContents,
+    DigestContents,  # Still needed for reading lock file
     FileContent,
     PathGlobs,
     Workspace,
@@ -23,13 +23,16 @@ from pants.jvm.target_types import JvmResolveField
 from pants.option.option_types import StrOption
 from pants.util.logging import LogLevel
 
+from clojure_backend.namespace_analysis import (
+    ClojureNamespaceAnalysis,
+    ClojureNamespaceAnalysisRequest,
+)
 from clojure_backend.target_types import (
     ClojureSourceField,
     ClojureSourceTarget,
     ClojureTestSourceField,
     ClojureTestTarget,
 )
-from clojure_backend.utils.namespace_parser import parse_namespace
 from clojure_backend.utils.source_roots import determine_source_root as _determine_source_root
 
 
@@ -203,19 +206,18 @@ def format_mvn_repos(repos: tuple[str, ...] | list[str]) -> str:
     return "{\n" + "\n".join(repo_entries) + "}"
 
 
-def determine_source_root(file_path: str, source_content: str) -> str | None:
+def determine_source_root(file_path: str, namespace: str | None) -> str | None:
     """Determine the source root directory for a Clojure file.
 
     For a file like projects/foo/src/example/core.clj with namespace example.core,
     the source root is projects/foo/src.
 
     Args:
-        file_path: The actual path to the Clojure source file (from DigestContents)
-        source_content: The file content for namespace parsing
+        file_path: The actual path to the Clojure source file
+        namespace: The parsed namespace for the file
 
-    Returns None if the namespace can't be parsed.
+    Returns None if the namespace is not provided.
     """
-    namespace = parse_namespace(source_content)
     if not namespace:
         return None
 
@@ -281,11 +283,12 @@ async def gather_clojure_sources_for_resolve(
 
     all_source_files = await MultiGet(source_files_requests)
 
-    # Get digest contents to read file contents for namespace parsing
-    digest_requests = [
-        Get(DigestContents, Digest, sf.snapshot.digest) for sf in all_source_files
+    # Use clj-kondo analysis to extract namespaces
+    analysis_requests = [
+        Get(ClojureNamespaceAnalysis, ClojureNamespaceAnalysisRequest(sf.snapshot))
+        for sf in all_source_files
     ]
-    all_digest_contents = await MultiGet(digest_requests)
+    all_analyses = await MultiGet(analysis_requests)
 
     # Determine source roots
     source_roots = set()
@@ -293,15 +296,17 @@ async def gather_clojure_sources_for_resolve(
 
     # Process source targets
     for i, target in enumerate(source_targets):
-        digest_contents = all_digest_contents[i]
-        if not digest_contents:
+        source_files = all_source_files[i]
+        analysis = all_analyses[i]
+
+        if not source_files.files:
             # Fallback: use target directory (only when no files match)
             source_roots.add(target.address.spec_path or ".")
             continue
 
-        source_content = digest_contents[0].content.decode("utf-8")
-        file_path = digest_contents[0].path  # Use actual file path from digest
-        source_root = determine_source_root(file_path, source_content)
+        file_path = source_files.files[0]
+        namespace = analysis.namespaces.get(file_path)
+        source_root = determine_source_root(file_path, namespace)
         if source_root:
             source_roots.add(source_root)
         else:
@@ -311,15 +316,17 @@ async def gather_clojure_sources_for_resolve(
     # Process test targets
     test_offset = len(source_targets)
     for i, target in enumerate(test_targets):
-        digest_contents = all_digest_contents[test_offset + i]
-        if not digest_contents:
+        source_files = all_source_files[test_offset + i]
+        analysis = all_analyses[test_offset + i]
+
+        if not source_files.files:
             # Fallback: use target directory (only when no files match)
             test_roots.add(target.address.spec_path or ".")
             continue
 
-        source_content = digest_contents[0].content.decode("utf-8")
-        file_path = digest_contents[0].path  # Use actual file path from digest
-        source_root = determine_source_root(file_path, source_content)
+        file_path = source_files.files[0]
+        namespace = analysis.namespaces.get(file_path)
+        source_root = determine_source_root(file_path, namespace)
         if source_root:
             test_roots.add(source_root)
         else:

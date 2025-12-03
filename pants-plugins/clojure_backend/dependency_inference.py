@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.engine.addresses import Address, Addresses
-from pants.engine.fs import Digest, DigestContents
 from pants.engine.internals.graph import Owners, OwnersRequest
 from pants.engine.internals.selectors import Get, MultiGet
 from pants.engine.rules import collect_rules, rule
@@ -27,6 +26,10 @@ from pants.util.logging import LogLevel
 from pants.util.ordered_set import OrderedSet
 
 from clojure_backend.clojure_symbol_mapping import ClojureNamespaceMapping
+from clojure_backend.namespace_analysis import (
+    ClojureNamespaceAnalysis,
+    ClojureNamespaceAnalysisRequest,
+)
 from clojure_backend.target_types import (
     ClojureSourceField,
     ClojureSourceTarget,
@@ -36,8 +39,6 @@ from clojure_backend.target_types import (
 from clojure_backend.utils.namespace_parser import (
     is_jdk_class,
     namespace_to_path,
-    parse_imports,
-    parse_requires,
 )
 
 
@@ -116,16 +117,22 @@ async def _infer_clojure_dependencies_impl(
         Get(SourceFiles, SourceFilesRequest([field_set.source])),
     )
 
-    # Read the source file content
-    digest_contents = await Get(DigestContents, Digest, source_files.snapshot.digest)
-    if not digest_contents:
+    if not source_files.files:
         return InferredDependencies([])
 
-    source_content = digest_contents[0].content.decode('utf-8')
+    # Analyze source file using clj-kondo to extract requires and imports
+    # Pants will memoize this by Snapshot digest for incremental builds
+    namespace_analysis = await Get(
+        ClojureNamespaceAnalysis,
+        ClojureNamespaceAnalysisRequest(source_files.snapshot),
+    )
 
-    # Parse required Clojure namespaces and imported Java classes
-    required_namespaces = parse_requires(source_content)
-    imported_classes = parse_imports(source_content)
+    # Get the file path to look up in analysis results
+    file_path = source_files.files[0]
+
+    # Get required Clojure namespaces and imported Java classes from analysis
+    required_namespaces = set(namespace_analysis.requires.get(file_path, ()))
+    imported_classes = set(namespace_analysis.imports.get(file_path, ()))
 
     # Convert namespaces to potential file paths and find owners
     dependencies: OrderedSet[Address] = OrderedSet()

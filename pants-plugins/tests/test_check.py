@@ -6,6 +6,7 @@ import pytest
 
 from clojure_backend.goals.check import ClojureCheckFieldSet, ClojureCheckRequest
 from clojure_backend.goals import check as check_goal
+from clojure_backend.namespace_analysis import rules as namespace_analysis_rules
 from clojure_backend.target_types import (
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,
@@ -13,7 +14,7 @@ from clojure_backend.target_types import (
 from clojure_backend.target_types import rules as target_types_rules
 from clojure_backend import compile_clj
 from pants.core.goals.check import CheckResults
-from pants.core.util_rules import config_files, source_files, stripped_source_files, system_binaries
+from pants.core.util_rules import config_files, external_tool, source_files, stripped_source_files, system_binaries
 from pants.engine.addresses import Address
 from pants.jvm import classpath, jvm_common, non_jvm_dependencies
 from pants.jvm.goals import lockfile
@@ -36,8 +37,10 @@ def rule_runner() -> RuleRunner:
             *config_files.rules(),
             *coursier_fetch_rules(),
             *coursier_setup_rules(),
+            *external_tool.rules(),
             *jdk_util_rules(),
             *jvm_common.rules(),
+            *namespace_analysis_rules(),
             *non_jvm_dependencies.rules(),
             *source_files.rules(),
             *stripped_source_files.rules(),

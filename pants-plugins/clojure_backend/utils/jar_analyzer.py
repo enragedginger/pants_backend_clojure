@@ -17,7 +17,37 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from clojure_backend.utils.namespace_parser import parse_namespace
+import re
+
+
+# Simple regex pattern to extract namespace from Clojure source files.
+# This pattern handles the common case of (ns namespace-name ...) at the start.
+# For JAR analysis (third-party dependencies), this is sufficient since most
+# libraries use standard namespace declarations. Complex edge cases are rare
+# in published JAR files.
+_NS_PATTERN = re.compile(
+    r'^\s*\(ns\s+([a-zA-Z][a-zA-Z0-9_.\-]*)',
+    re.MULTILINE
+)
+
+
+def _parse_namespace_simple(source_content: str) -> str | None:
+    """Parse namespace from Clojure source using simple regex.
+
+    This is a lightweight parser for JAR analysis. It handles the common case
+    where namespace declarations appear at the start of the file in standard
+    format. It doesn't handle edge cases like:
+    - Namespaces declared inside strings or comments
+    - Reader conditionals
+    - Complex metadata before namespace
+
+    For third-party JAR files, this is sufficient since published libraries
+    typically use standard namespace declarations.
+    """
+    match = _NS_PATTERN.search(source_content)
+    if match:
+        return match.group(1)
+    return None
 
 
 @dataclass(frozen=True)
@@ -123,7 +153,7 @@ def analyze_jar_for_namespaces(jar_path: Path) -> JarNamespaceAnalysis:
                 for entry in source_files:
                     try:
                         content = jar.read(entry).decode('utf-8', errors='ignore')
-                        ns = parse_namespace(content)
+                        ns = _parse_namespace_simple(content)
                         if ns:
                             namespaces.add(ns)
                     except Exception:

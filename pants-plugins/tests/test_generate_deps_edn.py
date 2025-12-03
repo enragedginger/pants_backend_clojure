@@ -14,6 +14,7 @@ from clojure_backend.goals.generate_deps import (
     parse_lock_file,
 )
 from clojure_backend.goals.generate_deps import rules as generate_deps_edn_rules
+from clojure_backend.namespace_analysis import rules as namespace_analysis_rules
 from clojure_backend.target_types import (
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,
@@ -22,7 +23,7 @@ from clojure_backend.target_types import (
 )
 from clojure_backend.target_types import rules as target_types_rules
 from pants.backend.java.target_types import JavaSourcesGeneratorTarget
-from pants.core.util_rules import config_files, source_files, stripped_source_files, system_binaries
+from pants.core.util_rules import config_files, external_tool, source_files, stripped_source_files, system_binaries
 from pants.engine.rules import QueryRule
 from pants.engine.target import AllTargets
 from pants.jvm import classpath, jvm_common, non_jvm_dependencies
@@ -46,10 +47,12 @@ def rule_runner() -> RuleRunner:
             *config_files.rules(),
             *coursier_fetch_rules(),
             *coursier_setup_rules(),
+            *external_tool.rules(),
             *generate_deps_edn_rules(),
             *jdk_util_rules(),
             *jvm_common.rules(),
             *lockfile.rules(),
+            *namespace_analysis_rules(),
             *non_jvm_dependencies.rules(),
             *source_files.rules(),
             *stripped_source_files.rules(),

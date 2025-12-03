@@ -8,7 +8,7 @@ from pants.core.goals.check import CheckRequest, CheckResult, CheckResults
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.core.util_rules.stripped_source_files import StrippedSourceFiles
 from pants.engine.addresses import Addresses
-from pants.engine.fs import CreateDigest, Digest, DigestContents, FileContent, MergeDigests
+from pants.engine.fs import CreateDigest, Digest, FileContent, MergeDigests
 from pants.engine.internals.selectors import Get, MultiGet
 from pants.engine.process import FallibleProcessResult, Process
 from pants.engine.rules import collect_rules, implicitly, rule
@@ -20,9 +20,13 @@ from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmJdkField, JvmResolveField
 from pants.util.logging import LogLevel
 
+from clojure_backend.namespace_analysis import (
+    ClojureNamespaceAnalysis,
+    ClojureNamespaceAnalysisRequest,
+)
 from clojure_backend.subsystems.clojure_check import ClojureCheckSubsystem
 from clojure_backend.target_types import ClojureSourceField
-from clojure_backend.utils.namespace_parser import parse_namespace, path_to_namespace
+from clojure_backend.utils.namespace_parser import path_to_namespace
 
 
 @dataclass(frozen=True)
@@ -121,18 +125,21 @@ async def check_clojure_field_set(
     # Strip source roots so files are at proper paths for Clojure's namespace resolution
     stripped_sources = await Get(StrippedSourceFiles, SourceFiles, sources)
 
-    # Read the file contents to extract namespaces
-    digest_contents = await Get(DigestContents, Digest, sources.snapshot.digest)
+    # Use clj-kondo analysis to extract namespace declarations
+    namespace_analysis = await Get(
+        ClojureNamespaceAnalysis,
+        ClojureNamespaceAnalysisRequest(sources.snapshot),
+    )
 
+    # Collect namespaces from analysis, falling back to path inference for syntax errors
     namespaces = []
-    for file_content in digest_contents:
-        content = file_content.content.decode('utf-8')
-        namespace = parse_namespace(content)
+    for file_path in sources.files:
+        namespace = namespace_analysis.namespaces.get(file_path)
 
         # If parsing fails, infer namespace from file path
         # This handles files with syntax errors that prevent parsing
         if not namespace:
-            namespace = path_to_namespace(file_content.path)
+            namespace = path_to_namespace(file_path)
 
         if namespace:
             namespaces.append(namespace)

@@ -3,19 +3,22 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from clojure_backend.namespace_analysis import (
+    ClojureNamespaceAnalysis,
+    ClojureNamespaceAnalysisRequest,
+)
 from clojure_backend.target_types import (
     ClojureSourceField,
     ClojureSourceTarget,
     ClojureTestSourceField,
     ClojureTestTarget,
 )
-from clojure_backend.utils.namespace_parser import parse_namespace
 from clojure_backend.utils.source_roots import determine_source_root
 from pants.core.goals.repl import ReplImplementation, ReplRequest
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.core.util_rules.system_binaries import BashBinary
 from pants.engine.addresses import Address, Addresses
-from pants.engine.fs import Digest, DigestContents, MergeDigests
+from pants.engine.fs import Digest, MergeDigests
 from pants.engine.internals.selectors import Get, MultiGet
 from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import AllTargets, SourcesField, TransitiveTargets, TransitiveTargetsRequest
@@ -195,25 +198,27 @@ async def _gather_source_roots(addresses: Addresses) -> set[str]:
 
     all_source_files = await MultiGet(source_files_requests)
 
-    # Get file contents to parse namespaces
-    digest_requests = [
-        Get(DigestContents, Digest, sf.snapshot.digest) for sf in all_source_files
+    # Use clj-kondo analysis to extract namespaces
+    analysis_requests = [
+        Get(ClojureNamespaceAnalysis, ClojureNamespaceAnalysisRequest(sf.snapshot))
+        for sf in all_source_files
     ]
-    all_digest_contents = await MultiGet(digest_requests)
+    all_analyses = await MultiGet(analysis_requests)
 
     # Determine source roots from namespaces
-    for i, digest_contents in enumerate(all_digest_contents):
-        if not digest_contents:
+    for i, source_files in enumerate(all_source_files):
+        analysis = all_analyses[i]
+
+        if not source_files.files:
             # Fallback: use target directory
             source_roots.add(clojure_targets[i].address.spec_path or ".")
             continue
 
-        # Parse first file's namespace
-        file_content = digest_contents[0].content.decode("utf-8")
-        namespace = parse_namespace(file_content)
+        # Get namespace from analysis
+        file_path = source_files.files[0]
+        namespace = analysis.namespaces.get(file_path)
 
         if namespace:
-            file_path = digest_contents[0].path
             source_root = determine_source_root(file_path, namespace)
             if source_root:
                 source_roots.add(source_root)

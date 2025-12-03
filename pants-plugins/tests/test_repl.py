@@ -6,6 +6,7 @@ import pytest
 
 from clojure_backend.goals.repl import ClojureNRepl, ClojureRebelRepl, ClojureRepl
 from clojure_backend.goals.repl import rules as repl_rules
+from clojure_backend.namespace_analysis import rules as namespace_analysis_rules
 from clojure_backend.target_types import (
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,
@@ -16,7 +17,7 @@ from clojure_backend.target_types import rules as target_types_rules
 from clojure_backend import compile_clj
 from pants.backend.java.target_types import JavaSourcesGeneratorTarget
 from pants.core.goals.repl import ReplRequest
-from pants.core.util_rules import config_files, source_files, stripped_source_files, system_binaries
+from pants.core.util_rules import config_files, external_tool, source_files, stripped_source_files, system_binaries
 from pants.engine.addresses import Address
 from pants.engine.rules import QueryRule
 from pants.engine.target import AllTargets
@@ -39,8 +40,10 @@ def rule_runner() -> RuleRunner:
             *config_files.rules(),
             *coursier_fetch_rules(),
             *coursier_setup_rules(),
+            *external_tool.rules(),
             *jdk_util_rules(),
             *jvm_common.rules(),
+            *namespace_analysis_rules(),
             *non_jvm_dependencies.rules(),
             *source_files.rules(),
             *stripped_source_files.rules(),

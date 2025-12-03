@@ -1,112 +1,14 @@
-"""Utilities for parsing Clojure namespace declarations.
+"""Utilities for Clojure namespace and file path conversions.
 
-This module provides functions for parsing Clojure source files to extract
-namespace declarations, required namespaces, and Java imports. It also
-provides conversion functions between namespace names and file paths.
+This module provides utility functions for converting between Clojure
+namespace names and file paths, as well as checking for JDK classes.
 
-The parsing is implemented using clj-kondo's static analysis capabilities,
-which properly handles all edge cases including:
-- Multi-line strings containing namespace-like patterns
-- Comments with namespace declarations
-- Reader conditionals (#?(:clj ...))
-- Complex nested forms
-- Prefix list notation
-- Metadata on namespace forms
+For parsing Clojure source files to extract namespaces, requires, and imports,
+use the ClojureNamespaceAnalysis rule from clojure_backend.namespace_analysis,
+which properly invokes clj-kondo inside the Pants sandbox.
 """
 
 from __future__ import annotations
-
-from clojure_backend.utils.clj_kondo_parser import (
-    parse_namespace_with_kondo,
-    parse_requires_with_kondo,
-    parse_imports_with_kondo,
-)
-
-
-def parse_namespace(source_content: str) -> str | None:
-    """Extract the namespace from a Clojure source file.
-
-    Args:
-        source_content: The content of the Clojure source file.
-
-    Returns:
-        The namespace name if found, None otherwise.
-
-    Example:
-        (ns example.project-a.core) -> "example.project-a.core"
-
-    This function uses clj-kondo's static analysis for accurate parsing,
-    handling all edge cases including:
-    - Multi-line strings containing "(ns fake.namespace)"
-    - Comments with namespace declarations
-    - Reader conditionals (#?(:clj ...))
-    - Metadata (^:deprecated)
-    - Complex nested forms
-    """
-    return parse_namespace_with_kondo(source_content)
-
-
-def parse_requires(source_content: str) -> set[str]:
-    """Extract required namespaces from :require and :use forms.
-
-    Args:
-        source_content: The content of the Clojure source file.
-
-    Returns:
-        A set of required namespace names.
-
-    Examples:
-        (ns example.foo
-          (:require [example.bar :as bar]
-                    [example.baz])
-          (:use [example.qux]))
-
-        Returns: {"example.bar", "example.baz", "example.qux"}
-
-    This function uses clj-kondo's static analysis for accurate parsing,
-    handling all edge cases including:
-    - Prefix list notation: (:require [example [bar] [baz]])
-    - Reader conditionals (#?(:clj ...))
-    - Complex multi-line forms
-    - Comments within require forms
-    - All :refer, :as, :refer-macros options
-    """
-    return parse_requires_with_kondo(source_content)
-
-
-def parse_imports(source_content: str) -> set[str]:
-    """Extract Java class imports from :import forms.
-
-    Handles both vector and single-class import syntax.
-
-    Args:
-        source_content: The content of the Clojure source file.
-
-    Returns:
-        A set of fully-qualified Java class names.
-
-    Examples:
-        Vector syntax:
-            (ns example.foo
-              (:import [java.util Date ArrayList]
-                       [java.io File]))
-            Returns: {"java.util.Date", "java.util.ArrayList", "java.io.File"}
-
-        Single-class syntax:
-            (ns example.bar
-              (:import java.util.Date
-                       java.io.File))
-            Returns: {"java.util.Date", "java.io.File"}
-
-    This function uses clj-kondo's static analysis for accurate parsing,
-    handling all edge cases including:
-    - Vector and single-class syntax
-    - Inner classes (Map$Entry)
-    - Reader conditionals
-    - Comments within import forms
-    - All whitespace variations
-    """
-    return parse_imports_with_kondo(source_content)
 
 
 def namespace_to_path(namespace: str) -> str:

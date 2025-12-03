@@ -18,6 +18,7 @@ from clojure_backend.dependency_inference import (
 )
 from clojure_backend.dependency_inference import rules as dependency_inference_rules
 from clojure_backend.clojure_symbol_mapping import rules as clojure_symbol_mapping_rules
+from clojure_backend.namespace_analysis import rules as namespace_analysis_rules
 from clojure_backend.goals.test import ClojureTestFieldSet, ClojureTestRequest
 from clojure_backend.goals.test import rules as test_runner_rules
 from clojure_backend.target_types import (
@@ -29,7 +30,7 @@ from clojure_backend.target_types import (
 from clojure_backend.target_types import rules as target_types_rules
 from clojure_backend import compile_clj
 from pants.core.goals.test import TestResult
-from pants.core.util_rules import config_files, source_files, stripped_source_files, system_binaries
+from pants.core.util_rules import config_files, external_tool, source_files, stripped_source_files, system_binaries
 from pants.jvm import classpath, jvm_common, non_jvm_dependencies
 from pants.engine.addresses import Address, Addresses
 from pants.engine.rules import QueryRule
@@ -66,11 +67,13 @@ def rule_runner() -> RuleRunner:
             *config_files.rules(),
             *coursier_fetch_rules(),
             *coursier_setup_rules(),
+            *external_tool.rules(),
             *jvm_tool.rules(),
             *jvm_common.rules(),
             *non_jvm_dependencies.rules(),
             *dependency_inference_rules(),
             *clojure_symbol_mapping_rules(),
+            *namespace_analysis_rules(),
             *target_types_rules(),
             *test_runner_rules(),
             *source_files.rules(),
