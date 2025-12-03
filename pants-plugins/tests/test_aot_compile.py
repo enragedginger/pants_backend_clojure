@@ -11,7 +11,6 @@ from clojure_backend.aot_compile import (
     CompiledClojureClasses,
     aot_compile_clojure,
 )
-from clojure_backend.config import DEFAULT_CLOJURE_VERSION
 from clojure_backend.aot_compile import rules as aot_compile_rules
 from clojure_backend import compile_clj
 from clojure_backend.target_types import ClojureSourceTarget
@@ -398,14 +397,6 @@ def test_aot_compile_with_dependencies(rule_runner: RuleRunner) -> None:
     assert any("myapp/core.class" in path for path in class_files)
     # Util doesn't have gen-class, so it only gets __init.class
     assert any("myapp/util__init.class" in path for path in class_files)
-
-
-def test_default_clojure_version() -> None:
-    """Test that a default Clojure version is defined."""
-    assert DEFAULT_CLOJURE_VERSION is not None
-    assert isinstance(DEFAULT_CLOJURE_VERSION, str)
-    # Should be a version string like "1.11.1"
-    assert "." in DEFAULT_CLOJURE_VERSION
 
 
 def test_aot_compile_syntax_error_fails(rule_runner: RuleRunner) -> None:

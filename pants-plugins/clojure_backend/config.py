@@ -6,9 +6,6 @@ throughout the Clojure Pants plugin.
 
 from __future__ import annotations
 
-# Default Clojure version for AOT compilation and checking
-DEFAULT_CLOJURE_VERSION = "1.12.3"
-
 # Default tool versions (can be overridden via subsystems)
 DEFAULT_NREPL_VERSION = "1.4.0"
 DEFAULT_REBEL_VERSION = "0.1.4"
