@@ -186,7 +186,8 @@ async def check_clojure_field_set(
         extra_jvm_options=extra_jvm_args,
     )
 
-    result = await Get(FallibleProcessResult, Process, await Get(Process, JvmProcess, jvm_process))
+    process = await Get(Process, JvmProcess, jvm_process)
+    result = await Get(FallibleProcessResult, Process, process)
 
     return CheckResult(
         exit_code=result.exit_code,

@@ -159,7 +159,8 @@ async def aot_compile_clojure(
     )
 
     # Execute the compilation
-    process_result = await Get(FallibleProcessResult, Process, await Get(Process, JvmProcess, process))
+    process_obj = await Get(Process, JvmProcess, process)
+    process_result = await Get(FallibleProcessResult, Process, process_obj)
 
     if process_result.exit_code != 0:
         stdout = process_result.stdout.decode('utf-8')
