@@ -1,5 +1,8 @@
 {
   "permissions": {
+    "additionalDirectories": [
+      "../../python/pants"
+    ],
     "allow": [
       "Bash(pants test:*)",
       "Bash(pants help:*)",
