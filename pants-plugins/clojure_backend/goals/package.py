@@ -272,6 +272,45 @@ async def package_clojure_deploy_jar(
             )
             provided_namespaces = set(provided_analysis.namespaces.values())
 
+    # Build set of project namespace paths for filtering AOT classes
+    # These are all the namespaces from our analyzed source files (excluding provided)
+    # Third-party classes from transitive AOT compilation should come from original JARs
+    project_namespace_paths = set()
+    for namespace in namespace_analysis.namespaces.values():
+        if namespace not in provided_namespaces:
+            # Convert namespace to path (e.g., "my.app.core" -> "my/app/core")
+            namespace_path = namespace.replace('.', '/').replace('-', '_')
+            project_namespace_paths.add(namespace_path)
+
+    def is_project_class(arcname: str) -> bool:
+        """Check if a class file belongs to a project namespace.
+
+        Handles:
+        - Direct namespace classes: my/app/core.class
+        - Inner classes: my/app/core$fn__123.class
+        - Method implementation: my/app/core$_main.class
+        - Init classes: my/app/core__init.class
+        """
+        # Remove .class extension
+        class_path = arcname[:-6]  # len('.class') == 6
+
+        # Handle inner classes (split on $) and __init classes
+        base_class_path = class_path.split('$')[0]
+        if base_class_path.endswith('__init'):
+            base_class_path = base_class_path[:-6]  # len('__init') == 6
+
+        # Check for exact match
+        if base_class_path in project_namespace_paths:
+            return True
+
+        # Check if this is a class in a subpackage of a project namespace
+        # e.g., my/app/core/impl.class is under my/app/core
+        for ns_path in project_namespace_paths:
+            if base_class_path.startswith(ns_path + '/'):
+                return True
+
+        return False
+
     # Create JAR manifest with main class
     manifest_content = f"""\
 Manifest-Version: 1.0
@@ -334,23 +373,21 @@ Created-By: Pants Build System
                     pass
 
         # Add compiled classes (they're in the classes/ directory)
-        # Exclude classes from provided dependencies
+        # Only include classes from project namespaces, not transitively compiled third-party
+        # This ensures third-party library classes come from their original JARs,
+        # which is critical for protocol extensions to work correctly.
         for file_content in digest_contents:
             if file_content.path.startswith('classes/') and file_content.path.endswith('.class'):
                 # Remove 'classes/' prefix to get the archive name
                 arcname = file_content.path[8:]  # len('classes/') == 8
 
-                # Check if this class file belongs to a provided namespace
-                is_provided = False
-                for namespace in provided_namespaces:
-                    # Convert namespace to path (e.g., "api.interface" -> "api/interface")
-                    namespace_path = namespace.replace('.', '/').replace('-', '_')
-                    if arcname.startswith(namespace_path):
-                        is_provided = True
-                        break
+                # Only include classes from project namespaces
+                # Third-party classes should come from their original JARs
+                if not is_project_class(arcname):
+                    continue
 
-                # Only add if not from a provided dependency
-                if not is_provided and arcname not in added_entries:
+                # Only add if not already in JAR (from dependency JARs)
+                if arcname not in added_entries:
                     jar.writestr(arcname, file_content.content)
                     added_entries.add(arcname)
 
