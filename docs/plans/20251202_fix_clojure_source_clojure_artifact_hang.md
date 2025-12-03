@@ -1,8 +1,64 @@
 # Plan: Fix `clojure_source` -> `jvm_artifact(clojure)` Dependency Hang
 
-## Status: IN PROGRESS - Implementing Option B
+## Status: BLOCKED - Tests Still Hanging After Implementation
 
 **Selected Solution:** Remove `ToolClasspathRequest` and rely on user's classpath containing Clojure.
+
+**Current Issue:** Tests are still hanging even after implementation. Investigation ongoing.
+
+---
+
+## Implementation Progress Log
+
+### What Has Been Done
+
+1. **Phase 1 & 2 Complete:** Removed `ToolClasspathRequest` from both `aot_compile.py` and `check.py`
+   - These changes were made in a previous session and are complete
+
+2. **Phase 3 Partial:** Updated tests to provide Clojure via lockfile
+   - Updated `test_check.py` with proper lockfile containing Clojure 1.11.0
+   - Updated `test_aot_compile.py` with proper lockfile (fixed fake fingerprints that were causing issues)
+   - Updated `test_package_clojure_deploy_jar.py` with proper lockfile and dependencies
+   - Updated `test_error_scenarios.py` with proper lockfile and dependencies
+
+3. **Test File Changes Made:**
+   - Added `LOCKFILE_WITH_CLOJURE` constant with correct Clojure 1.11.0 fingerprints
+   - Added `CLOJURE_3RDPARTY_BUILD` constant for jvm_artifact definition
+   - Updated all tests to use proper lockfile instead of empty/fake lockfiles
+   - Added `dependencies=["3rdparty/jvm:org.clojure_clojure"]` to clojure_source targets
+
+### What's Still Hanging
+
+Even with proper lockfiles, tests are still hanging for 60+ seconds before timing out or being interrupted. Tests affected:
+- `test_check_valid_clojure_code` in test_check.py
+- `test_check_with_unicode_characters` in test_error_scenarios.py
+- Other tests that invoke Clojure compilation
+
+### Possible Remaining Issues
+
+1. **Lockfile fingerprint mismatch:** Initial lockfile had wrong fingerprint for `spec.alpha` (fixed from `6a35c9027c...` to `67ec898eb5...`)
+
+2. **Still using cached bad state:** Pants may be caching something from previous runs that's causing the hang
+
+3. **Different root cause:** The hang may not be solely about ToolClasspathRequest vs user classpath conflict - there may be another scheduler issue
+
+4. **Test infrastructure issue:** The rule_runner tests may have their own issues with JVM artifact resolution
+
+### Things Tried That Didn't Work
+
+1. **Removing ToolClasspathRequest** - Implemented but tests still hang
+2. **Adding proper lockfiles with correct fingerprints** - Implemented but tests still hang
+3. **Adding explicit Clojure dependency to clojure_source targets** - Implemented but tests still hang
+4. **Running individual tests** - Still hang
+5. **Running test suite** - Hangs on JVM-related tests
+
+### Next Steps to Try
+
+1. **Clear Pants cache completely** and re-run tests
+2. **Check if non-check/non-AOT tests pass** - e.g., dependency inference tests that don't invoke Clojure
+3. **Add debug logging** to understand where exactly the hang occurs
+4. **Compare with working tests** - The `test_runner.py` tests work, compare their setup
+5. **Check if this is a rule_runner issue** - Maybe rule_runner has specific requirements for JVM tests
 
 ---
 

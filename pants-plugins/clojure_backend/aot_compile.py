@@ -13,12 +13,9 @@ from pants.engine.target import Targets
 from pants.jvm.classpath import classpath as classpath_get
 from pants.jvm.compile import ClasspathEntry
 from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest, JvmProcess
-from pants.jvm.resolve.common import ArtifactRequirement, ArtifactRequirements, Coordinate
-from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
 from pants.jvm.target_types import JvmJdkField, JvmResolveField
 from pants.util.logging import LogLevel
 
-from clojure_backend.config import DEFAULT_CLOJURE_VERSION
 from clojure_backend.target_types import ClojureSourceField, ClojureTestSourceField
 
 
@@ -64,26 +61,13 @@ async def aot_compile_clojure(
     # Get JDK environment
     jdk_request = JdkRequest.from_field(request.jdk) if request.jdk else JdkRequest.SOURCE_DEFAULT
 
-    # Fetch Clojure compiler (needed for AOT compilation)
-    clojure_artifact = ArtifactRequirement(
-        coordinate=Coordinate(
-            group="org.clojure",
-            artifact="clojure",
-            version=DEFAULT_CLOJURE_VERSION,
-        )
-    )
-
     # Get targets and their source files
-    jdk, classpath, targets, clojure_classpath = await MultiGet(
+    # Note: We rely on the user's classpath containing Clojure. This avoids scheduler
+    # conflicts when a clojure_source depends directly on jvm_artifact(clojure).
+    jdk, classpath, targets = await MultiGet(
         Get(JdkEnvironment, JdkRequest, jdk_request),
         classpath_get(**implicitly(request.source_addresses)),
         Get(Targets, Addresses, request.source_addresses),
-        Get(
-            ToolClasspath,
-            ToolClasspathRequest(
-                artifact_requirements=ArtifactRequirements([clojure_artifact]),
-            ),
-        ),
     )
 
     # Extract source fields from targets
@@ -134,24 +118,23 @@ async def aot_compile_clojure(
     compile_script_file = FileContent("__compile_script.clj", compile_script.encode("utf-8"))
     compile_script_digest = await Get(Digest, CreateDigest([compile_script_file]))
 
-    # Merge all inputs: sources, classpath, Clojure, and compile script
+    # Merge all inputs: sources, classpath, and compile script
     input_digest = await Get(
         Digest,
         MergeDigests([
             stripped_sources.snapshot.digest,
             *classpath.digests(),
-            clojure_classpath.digest,
             compile_script_digest,
         ]),
     )
 
-    # Build classpath: current directory (for sources) + dependencies + Clojure + classes output dir
+    # Build classpath: current directory (for sources) + dependencies + classes output dir
     # The classes_dir must be in the classpath for Clojure's compile to work
+    # Note: Clojure must be present in the user's classpath for AOT compilation to work
     classpath_entries = [
         ".",
         classes_dir,
         *classpath.args(),
-        *clojure_classpath.classpath_entries(),
     ]
 
     # Create the JVM process to run the compilation

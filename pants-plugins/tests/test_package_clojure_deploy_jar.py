@@ -34,12 +34,127 @@ from pants.jvm.resolve import coursier_fetch, jvm_tool
 from pants.jvm.resolve.coursier_setup import rules as coursier_setup_rules
 from pants.jvm.target_types import JvmArtifactTarget
 from pants.jvm.util_rules import rules as jdk_util_rules
-from pants.testutil.rule_runner import RuleRunner
+from pants.testutil.rule_runner import PYTHON_BOOTSTRAP_ENV, RuleRunner
+
+
+# Lockfile with Clojure for deploy JAR tests
+# Now that we rely on the user's classpath to provide Clojure (instead of fetching
+# it via ToolClasspathRequest), the tests need Clojure in the lockfile.
+# Using version 1.11.0 with correct fingerprints.
+LOCKFILE_WITH_CLOJURE_ONLY = """\
+# --- BEGIN PANTS LOCKFILE METADATA: DO NOT EDIT OR REMOVE ---
+# {
+#   "version": 1,
+#   "generated_with_requirements": [
+#     "org.clojure:clojure:1.11.0,url=not_provided,jar=not_provided"
+#   ]
+# }
+# --- END PANTS LOCKFILE METADATA ---
+
+[[entries]]
+file_name = "org.clojure_clojure_1.11.0.jar"
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "core.specs.alpha"
+version = "0.2.62"
+packaging = "jar"
+
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "spec.alpha"
+version = "0.3.218"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "core.specs.alpha"
+version = "0.2.62"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "spec.alpha"
+version = "0.3.218"
+packaging = "jar"
+
+
+[entries.coord]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.11.0"
+packaging = "jar"
+[entries.file_digest]
+fingerprint = "3e21fa75a07ec9ddbbf1b2b50356cf180710d0398deaa4f44e91cd6304555947"
+serialized_bytes_length = 4105010
+
+[[entries]]
+file_name = "org.clojure_core.specs.alpha_0.2.62.jar"
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.11.0"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.11.0"
+packaging = "jar"
+
+
+[entries.coord]
+group = "org.clojure"
+artifact = "core.specs.alpha"
+version = "0.2.62"
+packaging = "jar"
+[entries.file_digest]
+fingerprint = "06eea8c070bbe45c158567e443439681bc8c46e9123414f81bfa32ba42d6cbc8"
+serialized_bytes_length = 4325
+
+[[entries]]
+file_name = "org.clojure_spec.alpha_0.3.218.jar"
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.11.0"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.11.0"
+packaging = "jar"
+
+
+[entries.coord]
+group = "org.clojure"
+artifact = "spec.alpha"
+version = "0.3.218"
+packaging = "jar"
+[entries.file_digest]
+fingerprint = "67ec898eb55c66a957a55279dd85d1376bb994bd87668b2b0de1eb3b97e8aae0"
+serialized_bytes_length = 635617
+"""
+
+# Common BUILD file for 3rdparty Clojure dependency
+CLOJURE_3RDPARTY_BUILD = """\
+jvm_artifact(
+    name="org.clojure_clojure",
+    group="org.clojure",
+    artifact="clojure",
+    version="1.11.0",
+)
+"""
+
+_JVM_RESOLVES = {
+    "java17": "locks/jvm/java17.lock.jsonc",
+}
 
 
 @pytest.fixture
 def rule_runner() -> RuleRunner:
     rule_runner = RuleRunner(
+        preserve_tmpdirs=True,
         target_types=[ClojureSourceTarget, ClojureDeployJarTarget, JvmArtifactTarget],
         rules=[
             *package_rules(),
@@ -62,25 +177,33 @@ def rule_runner() -> RuleRunner:
             QueryRule(BuiltPackage, [ClojureDeployJarFieldSet]),
         ],
     )
+    return rule_runner
+
+
+def setup_rule_runner(rule_runner: RuleRunner) -> None:
+    """Configure rule_runner with JVM options."""
     rule_runner.set_options(
         [
-            "--jvm-resolves={'java17': 'locks/jvm/java17.lock.jsonc'}",
+            f"--jvm-resolves={repr(_JVM_RESOLVES)}",
             "--jvm-default-resolve=java17",
-        ]
+        ],
+        env_inherit=PYTHON_BOOTSTRAP_ENV,
     )
-    return rule_runner
 
 
 def test_package_simple_deploy_jar(rule_runner: RuleRunner) -> None:
     """Test packaging a simple clojure_deploy_jar."""
+    setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/hello/BUILD": dedent(
                 """\
                 clojure_source(
                     name="core",
                     source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
 
                 clojure_deploy_jar(
@@ -115,14 +238,17 @@ def test_package_simple_deploy_jar(rule_runner: RuleRunner) -> None:
 
 def test_package_deploy_jar_validates_gen_class(rule_runner: RuleRunner) -> None:
     """Test that packaging fails if main namespace doesn't have gen-class."""
+    setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/bad/BUILD": dedent(
                 """\
                 clojure_source(
                     name="core",
                     source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
 
                 clojure_deploy_jar(
@@ -161,18 +287,22 @@ def test_package_deploy_jar_validates_gen_class(rule_runner: RuleRunner) -> None
 
 def test_package_deploy_jar_with_aot_all(rule_runner: RuleRunner) -> None:
     """Test packaging with aot=':all' compiles all namespaces."""
+    setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/app/BUILD": dedent(
                 """\
                 clojure_source(
                     name="core",
                     source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
                 clojure_source(
                     name="util",
                     source="util.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
 
                 clojure_deploy_jar(
@@ -215,18 +345,22 @@ def test_package_deploy_jar_with_aot_all(rule_runner: RuleRunner) -> None:
 
 def test_package_deploy_jar_with_selective_aot(rule_runner: RuleRunner) -> None:
     """Test packaging with selective AOT compilation."""
+    setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/myapp/BUILD": dedent(
                 """\
                 clojure_source(
                     name="core",
                     source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
                 clojure_source(
                     name="config",
                     source="config.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
 
                 clojure_deploy_jar(
@@ -288,14 +422,17 @@ def test_clojure_deploy_jar_target_has_required_fields() -> None:
 
 def test_package_deploy_jar_with_custom_gen_class_name(rule_runner: RuleRunner) -> None:
     """Test packaging with a custom gen-class :name."""
+    setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/custom/BUILD": dedent(
                 """\
                 clojure_source(
                     name="core",
                     source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
 
                 clojure_deploy_jar(
@@ -329,9 +466,11 @@ def test_package_deploy_jar_with_custom_gen_class_name(rule_runner: RuleRunner) 
 
 def test_package_deploy_jar_missing_main_namespace(rule_runner: RuleRunner) -> None:
     """Test that packaging fails if main namespace source is not found."""
+    setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/missing/BUILD": dedent(
                 """\
                 clojure_deploy_jar(
@@ -359,14 +498,17 @@ def test_package_deploy_jar_missing_main_namespace(rule_runner: RuleRunner) -> N
 
 def test_package_deploy_jar_with_transitive_dependencies(rule_runner: RuleRunner) -> None:
     """Test packaging with transitive dependencies."""
+    setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/lib/BUILD": dedent(
                 """\
                 clojure_source(
                     name="util",
                     source="util.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
                 """
             ),
@@ -383,7 +525,7 @@ def test_package_deploy_jar_with_transitive_dependencies(rule_runner: RuleRunner
                 clojure_source(
                     name="core",
                     source="core.clj",
-                    dependencies=["//src/lib:util"],
+                    dependencies=["//src/lib:util", "3rdparty/jvm:org.clojure_clojure"],
                 )
 
                 clojure_deploy_jar(
@@ -416,14 +558,17 @@ def test_package_deploy_jar_with_transitive_dependencies(rule_runner: RuleRunner
 
 def test_provided_field_can_be_parsed(rule_runner: RuleRunner) -> None:
     """Test that provided field can be parsed and accessed."""
+    setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/lib/BUILD": dedent(
                 """\
                 clojure_source(
                     name="api",
                     source="api.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
                 """
             ),
@@ -440,7 +585,7 @@ def test_provided_field_can_be_parsed(rule_runner: RuleRunner) -> None:
                 clojure_source(
                     name="core",
                     source="core.clj",
-                    dependencies=["//src/lib:api"],
+                    dependencies=["//src/lib:api", "3rdparty/jvm:org.clojure_clojure"],
                 )
 
                 clojure_deploy_jar(
@@ -480,14 +625,17 @@ def test_provided_dependencies_excluded_from_jar(rule_runner: RuleRunner) -> Non
     """Test that provided dependencies are excluded from the final JAR."""
     import zipfile
 
+    setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/api/BUILD": dedent(
                 """\
                 clojure_source(
                     name="interface",
                     source="interface.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
                 """
             ),
@@ -504,6 +652,7 @@ def test_provided_dependencies_excluded_from_jar(rule_runner: RuleRunner) -> Non
                 clojure_source(
                     name="util",
                     source="util.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
                 """
             ),
@@ -520,7 +669,7 @@ def test_provided_dependencies_excluded_from_jar(rule_runner: RuleRunner) -> Non
                 clojure_source(
                     name="core",
                     source="core.clj",
-                    dependencies=["//src/api:interface", "//src/lib:util"],
+                    dependencies=["//src/api:interface", "//src/lib:util", "3rdparty/jvm:org.clojure_clojure"],
                 )
 
                 clojure_deploy_jar(
@@ -707,6 +856,7 @@ def test_provided_jvm_artifact_excluded_from_jar(rule_runner: RuleRunner) -> Non
     import io
     import zipfile
 
+    setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
             "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_JSR305,
@@ -719,10 +869,17 @@ def test_provided_jvm_artifact_excluded_from_jar(rule_runner: RuleRunner) -> Non
                     version="3.0.2",
                 )
 
+                jvm_artifact(
+                    name="clojure",
+                    group="org.clojure",
+                    artifact="clojure",
+                    version="1.11.0",
+                )
+
                 clojure_source(
                     name="core",
                     source="core.clj",
-                    dependencies=[":jsr305"],
+                    dependencies=[":jsr305", ":clojure"],
                 )
 
                 clojure_deploy_jar(
@@ -895,12 +1052,18 @@ def test_provided_maven_transitives_excluded_from_jar(rule_runner: RuleRunner) -
     This is the key integration test for the Maven transitive exclusion feature.
     When org.clojure:clojure is marked as provided, its transitive dependencies
     (spec.alpha, core.specs.alpha) should also be excluded from the final JAR.
+
+    This test also verifies the fix for the scheduler hang issue that occurred when
+    a clojure_source depends directly on a jvm_artifact(clojure). Previously this
+    caused a deadlock because both the tool classpath and user classpath tried to
+    resolve org.clojure:clojure. Now we rely solely on the user's classpath.
     """
     import io
     import zipfile
 
-    # Test Maven transitive exclusion by having clojure_deploy_jar depend on clojure directly
-    # (not via clojure_source, which causes Pants engine issues when depending on jvm_artifact(clojure))
+    setup_rule_runner(rule_runner)
+    # Test Maven transitive exclusion by having clojure_source depend on clojure directly
+    # This used to cause a Pants scheduler hang, but should now work correctly
     rule_runner.write_files(
         {
             "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_JSR305,
@@ -916,12 +1079,13 @@ def test_provided_maven_transitives_excluded_from_jar(rule_runner: RuleRunner) -
                 clojure_source(
                     name="core",
                     source="core.clj",
+                    dependencies=[":clojure"],
                 )
 
                 clojure_deploy_jar(
                     name="app",
                     main="app.core",
-                    dependencies=[":core", ":clojure"],
+                    dependencies=[":core"],
                     provided=[":clojure"],
                 )
                 """

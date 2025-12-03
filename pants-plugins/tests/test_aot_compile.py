@@ -9,9 +9,9 @@ import pytest
 from clojure_backend.aot_compile import (
     CompileClojureAOTRequest,
     CompiledClojureClasses,
-    DEFAULT_CLOJURE_VERSION,
     aot_compile_clojure,
 )
+from clojure_backend.config import DEFAULT_CLOJURE_VERSION
 from clojure_backend.aot_compile import rules as aot_compile_rules
 from clojure_backend import compile_clj
 from clojure_backend.target_types import ClojureSourceTarget
@@ -23,14 +23,125 @@ from pants.engine.fs import DigestContents
 from pants.engine.rules import QueryRule
 from pants.jvm import classpath, jvm_common
 from pants.jvm.resolve import coursier_fetch, jvm_tool
-from pants.jvm.target_types import JvmResolveField
+from pants.jvm.target_types import JvmArtifactTarget, JvmResolveField
 from pants.testutil.rule_runner import RuleRunner
+
+
+# Lockfile with Clojure for AOT compile tests
+# Now that we rely on the user's classpath to provide Clojure (instead of fetching
+# it via ToolClasspathRequest), the tests need Clojure in the lockfile.
+# Using version 1.11.0 with correct fingerprints.
+LOCKFILE_WITH_CLOJURE = """\
+# --- BEGIN PANTS LOCKFILE METADATA: DO NOT EDIT OR REMOVE ---
+# {
+#   "version": 1,
+#   "generated_with_requirements": [
+#     "org.clojure:clojure:1.11.0,url=not_provided,jar=not_provided"
+#   ]
+# }
+# --- END PANTS LOCKFILE METADATA ---
+
+[[entries]]
+file_name = "org.clojure_clojure_1.11.0.jar"
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "core.specs.alpha"
+version = "0.2.62"
+packaging = "jar"
+
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "spec.alpha"
+version = "0.3.218"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "core.specs.alpha"
+version = "0.2.62"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "spec.alpha"
+version = "0.3.218"
+packaging = "jar"
+
+
+[entries.coord]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.11.0"
+packaging = "jar"
+[entries.file_digest]
+fingerprint = "3e21fa75a07ec9ddbbf1b2b50356cf180710d0398deaa4f44e91cd6304555947"
+serialized_bytes_length = 4105010
+
+[[entries]]
+file_name = "org.clojure_core.specs.alpha_0.2.62.jar"
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.11.0"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.11.0"
+packaging = "jar"
+
+
+[entries.coord]
+group = "org.clojure"
+artifact = "core.specs.alpha"
+version = "0.2.62"
+packaging = "jar"
+[entries.file_digest]
+fingerprint = "06eea8c070bbe45c158567e443439681bc8c46e9123414f81bfa32ba42d6cbc8"
+serialized_bytes_length = 4325
+
+[[entries]]
+file_name = "org.clojure_spec.alpha_0.3.218.jar"
+[[entries.directDependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.11.0"
+packaging = "jar"
+
+[[entries.dependencies]]
+group = "org.clojure"
+artifact = "clojure"
+version = "1.11.0"
+packaging = "jar"
+
+
+[entries.coord]
+group = "org.clojure"
+artifact = "spec.alpha"
+version = "0.3.218"
+packaging = "jar"
+[entries.file_digest]
+fingerprint = "67ec898eb55c66a957a55279dd85d1376bb994bd87668b2b0de1eb3b97e8aae0"
+serialized_bytes_length = 635617
+"""
+
+
+# Common BUILD file for 3rdparty Clojure dependency
+CLOJURE_3RDPARTY_BUILD = """\
+jvm_artifact(
+    name="org.clojure_clojure",
+    group="org.clojure",
+    artifact="clojure",
+    version="1.11.0",
+)
+"""
 
 
 @pytest.fixture
 def rule_runner() -> RuleRunner:
     rule_runner = RuleRunner(
-        target_types=[ClojureSourceTarget],
+        target_types=[ClojureSourceTarget, JvmArtifactTarget],
         rules=[
             *aot_compile_rules(),
             *classpath.rules(),
@@ -57,12 +168,14 @@ def test_aot_compile_simple_namespace(rule_runner: RuleRunner) -> None:
     """Test AOT compiling a simple namespace with gen-class."""
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",  # Minimal lockfile
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/hello/BUILD": dedent(
                 """\
                 clojure_source(
                     name="core",
                     source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
                 """
             ),
@@ -110,12 +223,14 @@ def test_aot_compile_namespace_with_functions(rule_runner: RuleRunner) -> None:
     """Test AOT compiling a namespace with multiple functions."""
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/math/BUILD": dedent(
                 """\
                 clojure_source(
                     name="calc",
                     source="calc.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
                 """
             ),
@@ -160,16 +275,19 @@ def test_aot_compile_multiple_namespaces(rule_runner: RuleRunner) -> None:
     """Test AOT compiling multiple namespaces at once."""
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/app/BUILD": dedent(
                 """\
                 clojure_source(
                     name="core",
                     source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
                 clojure_source(
                     name="util",
                     source="util.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
                 """
             ),
@@ -220,17 +338,19 @@ def test_aot_compile_with_dependencies(rule_runner: RuleRunner) -> None:
     """Test AOT compiling a namespace that requires another namespace."""
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/myapp/BUILD": dedent(
                 """\
                 clojure_source(
                     name="util",
                     source="util.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
                 clojure_source(
                     name="core",
                     source="core.clj",
-                    dependencies=[":util"],
+                    dependencies=[":util", "3rdparty/jvm:org.clojure_clojure"],
                 )
                 """
             ),
@@ -292,12 +412,14 @@ def test_aot_compile_syntax_error_fails(rule_runner: RuleRunner) -> None:
     """Test that AOT compilation fails gracefully with syntax errors."""
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/bad/BUILD": dedent(
                 """\
                 clojure_source(
                     name="syntax_error",
                     source="syntax_error.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
                 """
             ),
@@ -331,17 +453,19 @@ def test_aot_compile_mixed_gen_class_and_regular_namespaces(rule_runner: RuleRun
     """Test AOT compiling with both gen-class and regular namespaces."""
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/mixed/BUILD": dedent(
                 """\
                 clojure_source(
                     name="util",
                     source="util.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
                 clojure_source(
                     name="main",
                     source="main.clj",
-                    dependencies=[":util"],
+                    dependencies=[":util", "3rdparty/jvm:org.clojure_clojure"],
                 )
                 """
             ),
@@ -392,12 +516,14 @@ def test_aot_compile_namespace_without_gen_class(rule_runner: RuleRunner) -> Non
     """Test that compiling a namespace without gen-class still works."""
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": "{}",
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/plain/BUILD": dedent(
                 """\
                 clojure_source(
                     name="lib",
                     source="lib.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
                 )
                 """
             ),

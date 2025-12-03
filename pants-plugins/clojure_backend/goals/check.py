@@ -10,19 +10,16 @@ from pants.core.util_rules.stripped_source_files import StrippedSourceFiles
 from pants.engine.addresses import Addresses
 from pants.engine.fs import CreateDigest, Digest, DigestContents, FileContent, MergeDigests
 from pants.engine.internals.selectors import Get, MultiGet
-from pants.engine.process import FallibleProcessResult, Process, ProcessResult
+from pants.engine.process import FallibleProcessResult, Process
 from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.target import FieldSet
 from pants.engine.unions import UnionRule
 from pants.jvm.classpath import Classpath, classpath
 from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest, JvmProcess
-from pants.jvm.resolve.common import ArtifactRequirement, ArtifactRequirements, Coordinate
-from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmJdkField, JvmResolveField
 from pants.util.logging import LogLevel
 
-from clojure_backend.config import DEFAULT_CLOJURE_VERSION
 from clojure_backend.subsystems.clojure_check import ClojureCheckSubsystem
 from clojure_backend.target_types import ClojureSourceField
 from clojure_backend.utils.namespace_parser import parse_namespace, path_to_namespace
@@ -109,26 +106,13 @@ async def check_clojure_field_set(
     field_set = request.field_set
 
     # Get JDK and classpath for this target
+    # Note: We rely on the user's classpath containing Clojure. This avoids scheduler
+    # conflicts when a clojure_source depends directly on jvm_artifact(clojure).
     jdk_request = JdkRequest.from_field(field_set.jdk_version)
 
-    # Fetch Clojure runtime (needed for namespace loading)
-    clojure_artifact = ArtifactRequirement(
-        coordinate=Coordinate(
-            group="org.clojure",
-            artifact="clojure",
-            version=DEFAULT_CLOJURE_VERSION,
-        )
-    )
-
-    jdk, clspath, clojure_classpath = await MultiGet(
+    jdk, clspath = await MultiGet(
         Get(JdkEnvironment, JdkRequest, jdk_request),
         classpath(**implicitly(Addresses([field_set.address]))),
-        Get(
-            ToolClasspath,
-            ToolClasspathRequest(
-                artifact_requirements=ArtifactRequirements([clojure_artifact]),
-            ),
-        ),
     )
 
     # Get source files and extract namespaces
@@ -178,18 +162,17 @@ async def check_clojure_field_set(
             loader_digest,
             stripped_sources.snapshot.digest,
             *clspath.digests(),
-            clojure_classpath.digest,
         ])
     )
 
     # Build JVM command with additional args if provided
     extra_jvm_args = list(clojure_check.args) if clojure_check.args else []
 
-    # Build classpath: current directory (for sources) + dependencies + Clojure runtime
+    # Build classpath: current directory (for sources) + dependencies
+    # Note: Clojure must be present in the user's classpath for check to work
     classpath_entries = [
         ".",
         *clspath.args(),
-        *clojure_classpath.classpath_entries(),
     ]
 
     # Create JVM process to run the check
