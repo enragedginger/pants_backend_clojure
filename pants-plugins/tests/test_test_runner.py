@@ -151,8 +151,8 @@ def test_simple_passing_test(rule_runner: RuleRunner) -> None:
                 version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
-                fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
-                serialized_bytes_length = 4227052
+                fingerprint = "cb2a1a3db1c2cd76ef4fa4a545d5a65f10b1b48b7f7672f0a109f5476f057166"
+                serialized_bytes_length = 4230055
                 [[entries]]
                 file_name = "org.clojure_core.specs.alpha_0.4.74.jar"
                 [[entries.directDependencies]]
@@ -294,8 +294,8 @@ def test_simple_failing_test(rule_runner: RuleRunner) -> None:
                 version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
-                fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
-                serialized_bytes_length = 4227052
+                fingerprint = "cb2a1a3db1c2cd76ef4fa4a545d5a65f10b1b48b7f7672f0a109f5476f057166"
+                serialized_bytes_length = 4230055
                 [[entries]]
                 file_name = "org.clojure_core.specs.alpha_0.4.74.jar"
                 [[entries.directDependencies]]
@@ -435,8 +435,8 @@ def test_test_with_timeout(rule_runner: RuleRunner) -> None:
                 version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
-                fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
-                serialized_bytes_length = 4227052
+                fingerprint = "cb2a1a3db1c2cd76ef4fa4a545d5a65f10b1b48b7f7672f0a109f5476f057166"
+                serialized_bytes_length = 4230055
                 [[entries]]
                 file_name = "org.clojure_core.specs.alpha_0.4.74.jar"
                 [[entries.directDependencies]]
@@ -576,8 +576,8 @@ def test_test_with_clojure_source_dependencies(rule_runner: RuleRunner) -> None:
                 version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
-                fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
-                serialized_bytes_length = 4227052
+                fingerprint = "cb2a1a3db1c2cd76ef4fa4a545d5a65f10b1b48b7f7672f0a109f5476f057166"
+                serialized_bytes_length = 4230055
                 [[entries]]
                 file_name = "org.clojure_core.specs.alpha_0.4.74.jar"
                 [[entries.directDependencies]]
@@ -742,8 +742,8 @@ def test_test_failure_with_assertion_message(rule_runner: RuleRunner) -> None:
                 version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
-                fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
-                serialized_bytes_length = 4227052
+                fingerprint = "cb2a1a3db1c2cd76ef4fa4a545d5a65f10b1b48b7f7672f0a109f5476f057166"
+                serialized_bytes_length = 4230055
                 [[entries]]
                 file_name = "org.clojure_core.specs.alpha_0.4.74.jar"
                 [[entries.directDependencies]]
@@ -884,8 +884,8 @@ def test_test_with_extra_env_vars(rule_runner: RuleRunner) -> None:
                 version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
-                fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
-                serialized_bytes_length = 4227052
+                fingerprint = "cb2a1a3db1c2cd76ef4fa4a545d5a65f10b1b48b7f7672f0a109f5476f057166"
+                serialized_bytes_length = 4230055
                 [[entries]]
                 file_name = "org.clojure_core.specs.alpha_0.4.74.jar"
                 [[entries.directDependencies]]
@@ -1028,8 +1028,8 @@ def test_missing_namespace_declaration_fails(rule_runner: RuleRunner) -> None:
                 version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
-                fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
-                serialized_bytes_length = 4227052
+                fingerprint = "cb2a1a3db1c2cd76ef4fa4a545d5a65f10b1b48b7f7672f0a109f5476f057166"
+                serialized_bytes_length = 4230055
                 [[entries]]
                 file_name = "org.clojure_core.specs.alpha_0.4.74.jar"
                 [[entries.directDependencies]]
@@ -1174,8 +1174,8 @@ def test_syntax_error_in_test_fails_with_message(rule_runner: RuleRunner) -> Non
                 version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
-                fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
-                serialized_bytes_length = 4227052
+                fingerprint = "cb2a1a3db1c2cd76ef4fa4a545d5a65f10b1b48b7f7672f0a109f5476f057166"
+                serialized_bytes_length = 4230055
                 [[entries]]
                 file_name = "org.clojure_core.specs.alpha_0.4.74.jar"
                 [[entries.directDependencies]]
