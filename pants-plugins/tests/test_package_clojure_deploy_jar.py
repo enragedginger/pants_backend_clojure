@@ -8,6 +8,7 @@ import pytest
 
 from clojure_backend.aot_compile import rules as aot_compile_rules
 from clojure_backend import compile_clj
+from clojure_backend.namespace_analysis import rules as namespace_analysis_rules
 from clojure_backend.provided_dependencies import rules as provided_dependencies_rules
 from clojure_backend.goals.package import (
     ClojureDeployJarFieldSet,
@@ -24,7 +25,7 @@ from clojure_backend.target_types import (
 from clojure_backend.target_types import rules as target_types_rules
 from pants.build_graph.address import Address
 from pants.core.goals.package import BuiltPackage
-from pants.core.util_rules import config_files, source_files, stripped_source_files, system_binaries
+from pants.core.util_rules import config_files, external_tool, source_files, stripped_source_files, system_binaries
 from pants.engine.fs import DigestContents
 from pants.engine.internals.scheduler import ExecutionError
 from pants.engine.rules import QueryRule
@@ -51,12 +52,14 @@ def rule_runner() -> RuleRunner:
         rules=[
             *package_rules(),
             *aot_compile_rules(),
+            *namespace_analysis_rules(),
             *provided_dependencies_rules(),
             *classpath.rules(),
             *compile_clj.rules(),
             *config_files.rules(),
             *coursier_fetch.rules(),
             *coursier_setup_rules(),
+            *external_tool.rules(),
             *jdk_util_rules(),
             *jvm_common.rules(),
             *jvm_tool.rules(),

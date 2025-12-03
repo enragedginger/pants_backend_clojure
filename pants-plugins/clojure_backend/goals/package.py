@@ -14,7 +14,7 @@ from pants.core.goals.package import (
 )
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.engine.addresses import Addresses
-from pants.engine.fs import CreateDigest, Digest, DigestContents, FileContent, MergeDigests
+from pants.engine.fs import CreateDigest, Digest, DigestContents, FileContent, MergeDigests, Snapshot
 from pants.engine.internals.selectors import Get, MultiGet
 from pants.engine.rules import collect_rules, rule
 from pants.engine.target import (
@@ -31,11 +31,16 @@ from pants.jvm.package.deploy_jar import (
 )
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmJdkField, JvmResolveField
+from pants.util.frozendict import FrozenDict
 from pants.util.logging import LogLevel
 
 from clojure_backend.aot_compile import (
     CompileClojureAOTRequest,
     CompiledClojureClasses,
+)
+from clojure_backend.namespace_analysis import (
+    ClojureNamespaceAnalysis,
+    ClojureNamespaceAnalysisRequest,
 )
 from clojure_backend.provided_dependencies import (
     ProvidedDependencies,
@@ -49,7 +54,6 @@ from clojure_backend.target_types import (
     ClojureSourceField,
     ClojureTestSourceField,
 )
-from clojure_backend.utils.namespace_parser import parse_namespace
 
 
 @dataclass(frozen=True)
@@ -107,14 +111,24 @@ async def package_clojure_deploy_jar(
         elif tgt.has_field(ClojureTestSourceField):
             source_fields.append(tgt[ClojureTestSourceField])
 
-    # Get source files and their contents
+    # Get source files and analyze namespaces using clj-kondo
     if source_fields:
         source_files = await Get(
             SourceFiles,
             SourceFilesRequest(source_fields),
         )
+        # Analyze all source files in batch using clj-kondo
+        namespace_analysis = await Get(
+            ClojureNamespaceAnalysis,
+            ClojureNamespaceAnalysisRequest(source_files.snapshot),
+        )
         digest_contents = await Get(DigestContents, Digest, source_files.snapshot.digest)
     else:
+        namespace_analysis = ClojureNamespaceAnalysis(
+            namespaces=FrozenDict({}),
+            requires=FrozenDict({}),
+            imports=FrozenDict({}),
+        )
         digest_contents = []
 
     # Determine which namespaces to compile
@@ -122,13 +136,7 @@ async def package_clojure_deploy_jar(
 
     if ":all" in aot_field.value:
         # Compile all Clojure namespaces in the project
-        namespaces = []
-        for file_content in digest_contents:
-            content = file_content.content.decode("utf-8")
-            namespace = parse_namespace(content)
-            if namespace:
-                namespaces.append(namespace)
-        namespaces_to_compile = tuple(sorted(set(namespaces)))
+        namespaces_to_compile = tuple(sorted(set(namespace_analysis.namespaces.values())))
     elif not aot_field.value:
         # Default: compile just the main namespace (transitive)
         namespaces_to_compile = (main_namespace,)
@@ -136,14 +144,18 @@ async def package_clojure_deploy_jar(
         # Explicit list of namespaces
         namespaces_to_compile = tuple(aot_field.value)
 
-    # Validate main namespace has (:gen-class) and get main class name
+    # Find the source file for main namespace using the analysis result
+    # Build reverse mapping: namespace -> file path
+    namespace_to_file = {ns: path for path, ns in namespace_analysis.namespaces.items()}
+    main_source_path = namespace_to_file.get(main_namespace)
     main_source_file = None
-    for file_content in digest_contents:
-        content = file_content.content.decode("utf-8")
-        namespace = parse_namespace(content)
-        if namespace == main_namespace:
-            main_source_file = content
-            break
+
+    if main_source_path:
+        # Find the file content for the main source
+        for file_content in digest_contents:
+            if file_content.path == main_source_path:
+                main_source_file = file_content.content.decode("utf-8")
+                break
 
     if not main_source_file:
         raise ValueError(
@@ -245,29 +257,20 @@ async def package_clojure_deploy_jar(
             elif tgt.has_field(ClojureTestSourceField):
                 provided_source_fields.append(tgt[ClojureTestSourceField])
 
-    # Get all source files in parallel using MultiGet
-    provided_namespaces = set()
+    # Get all source files and analyze namespaces
+    provided_namespaces: set[str] = set()
     if provided_source_fields:
-        all_source_requests = await MultiGet(
-            Get(SourceFiles, SourceFilesRequest([field]))
-            for field in provided_source_fields
+        provided_source_files = await Get(
+            SourceFiles,
+            SourceFilesRequest(provided_source_fields),
         )
-
-        # Get all source contents in parallel
-        source_digests = [req.snapshot.digest for req in all_source_requests if req.files]
-        if source_digests:
-            all_contents = await MultiGet(
-                Get(DigestContents, Digest, digest)
-                for digest in source_digests
+        if provided_source_files.files:
+            # Analyze provided source files using clj-kondo
+            provided_analysis = await Get(
+                ClojureNamespaceAnalysis,
+                ClojureNamespaceAnalysisRequest(provided_source_files.snapshot),
             )
-
-            # Parse namespaces from all source files
-            for content_result in all_contents:
-                for file_content in content_result:
-                    content = file_content.content.decode("utf-8")
-                    namespace = parse_namespace(content)
-                    if namespace:
-                        provided_namespaces.add(namespace)
+            provided_namespaces = set(provided_analysis.namespaces.values())
 
     # Create JAR manifest with main class
     manifest_content = f"""\
