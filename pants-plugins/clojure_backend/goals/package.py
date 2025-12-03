@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import re
 import zipfile
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 from pants.core.goals.package import (
     BuiltPackage,
@@ -282,6 +285,15 @@ async def package_clojure_deploy_jar(
             namespace_path = namespace.replace('.', '/').replace('-', '_')
             project_namespace_paths.add(namespace_path)
 
+    # Warn if no project namespaces were detected - this may indicate a configuration issue
+    if not project_namespace_paths:
+        logger.warning(
+            f"No project namespaces detected for {field_set.address}. "
+            "All AOT-compiled classes will be excluded from the JAR. "
+            "This may indicate a configuration issue - ensure your clojure_source targets "
+            "are properly configured as dependencies."
+        )
+
     def is_project_class(arcname: str) -> bool:
         """Check if a class file belongs to a project namespace.
 
@@ -376,6 +388,7 @@ Created-By: Pants Build System
         # Only include classes from project namespaces, not transitively compiled third-party
         # This ensures third-party library classes come from their original JARs,
         # which is critical for protocol extensions to work correctly.
+        excluded_third_party_count = 0
         for file_content in digest_contents:
             if file_content.path.startswith('classes/') and file_content.path.endswith('.class'):
                 # Remove 'classes/' prefix to get the archive name
@@ -384,12 +397,22 @@ Created-By: Pants Build System
                 # Only include classes from project namespaces
                 # Third-party classes should come from their original JARs
                 if not is_project_class(arcname):
+                    logger.debug(
+                        f"Excluding transitively AOT-compiled third-party class: {arcname}"
+                    )
+                    excluded_third_party_count += 1
                     continue
 
                 # Only add if not already in JAR (from dependency JARs)
                 if arcname not in added_entries:
                     jar.writestr(arcname, file_content.content)
                     added_entries.add(arcname)
+
+        if excluded_third_party_count > 0:
+            logger.debug(
+                f"Excluded {excluded_third_party_count} transitively AOT-compiled third-party "
+                f"classes from {field_set.address}. These classes will come from their original JARs."
+            )
 
     # Create the output digest with the JAR file
     jar_bytes = jar_buffer.getvalue()
