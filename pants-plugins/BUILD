@@ -6,4 +6,6 @@ python_requirements(name="pants-test-reqs", resolve="pants-plugins", source="tes
 
 python_sources(name="pants-plugin-sources", resolve="pants-plugins", sources=["clojure_backend/**/*.py"], dependencies=[":pants", ":pants-reqs"])
 
-python_tests(name="test-plugin-sources", resolve="pants-plugins", sources=["tests/**/test_*.py"], dependencies=[":pants-reqs", ":pants-test-reqs", ":pants-plugin-sources"])
+python_sources(name="test-fixtures", resolve="pants-plugins", sources=["tests/**/clojure_test_fixtures.py"])
+
+python_tests(name="test-plugin-sources", resolve="pants-plugins", sources=["tests/**/test_*.py"], dependencies=[":pants-reqs", ":pants-test-reqs", ":pants-plugin-sources", ":test-fixtures"])

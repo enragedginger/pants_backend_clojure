@@ -23,6 +23,8 @@ from pants.jvm.target_types import JvmArtifactTarget
 from pants.jvm.util_rules import rules as jdk_util_rules
 from pants.testutil.rule_runner import PYTHON_BOOTSTRAP_ENV, QueryRule, RuleRunner
 
+from .clojure_test_fixtures import CLOJURE_LOCKFILE, CLOJURE_3RDPARTY_BUILD
+
 
 @pytest.fixture
 def rule_runner() -> RuleRunner:
@@ -59,104 +61,6 @@ _JVM_RESOLVES = {
 }
 
 
-# Lockfile with Clojure for check tests
-# Now that we rely on the user's classpath to provide Clojure (instead of fetching
-# it via ToolClasspathRequest), the tests need Clojure in the lockfile.
-# Using version 1.11.0 with correct fingerprints.
-LOCKFILE_WITH_CLOJURE = """\
-# --- BEGIN PANTS LOCKFILE METADATA: DO NOT EDIT OR REMOVE ---
-# {
-#   "version": 1,
-#   "generated_with_requirements": [
-#     "org.clojure:clojure:1.11.0,url=not_provided,jar=not_provided"
-#   ]
-# }
-# --- END PANTS LOCKFILE METADATA ---
-
-[[entries]]
-file_name = "org.clojure_clojure_1.11.0.jar"
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "core.specs.alpha"
-version = "0.2.62"
-packaging = "jar"
-
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "spec.alpha"
-version = "0.3.218"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "core.specs.alpha"
-version = "0.2.62"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "spec.alpha"
-version = "0.3.218"
-packaging = "jar"
-
-
-[entries.coord]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-[entries.file_digest]
-fingerprint = "3e21fa75a07ec9ddbbf1b2b50356cf180710d0398deaa4f44e91cd6304555947"
-serialized_bytes_length = 4105010
-
-[[entries]]
-file_name = "org.clojure_core.specs.alpha_0.2.62.jar"
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-
-[entries.coord]
-group = "org.clojure"
-artifact = "core.specs.alpha"
-version = "0.2.62"
-packaging = "jar"
-[entries.file_digest]
-fingerprint = "06eea8c070bbe45c158567e443439681bc8c46e9123414f81bfa32ba42d6cbc8"
-serialized_bytes_length = 4325
-
-[[entries]]
-file_name = "org.clojure_spec.alpha_0.3.218.jar"
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-
-[entries.coord]
-group = "org.clojure"
-artifact = "spec.alpha"
-version = "0.3.218"
-packaging = "jar"
-[entries.file_digest]
-fingerprint = "67ec898eb55c66a957a55279dd85d1376bb994bd87668b2b0de1eb3b97e8aae0"
-serialized_bytes_length = 635617
-"""
 
 
 def run_clojure_check(
@@ -186,17 +90,8 @@ def test_check_valid_clojure_code(rule_runner: RuleRunner) -> None:
     """Test that valid Clojure code passes check."""
     rule_runner.write_files(
         {
-            "3rdparty/jvm/BUILD": dedent(
-                """\
-                jvm_artifact(
-                    name="org.clojure_clojure",
-                    group="org.clojure",
-                    artifact="clojure",
-                    version="1.11.0",
-                )
-                """
-            ),
-            "3rdparty/jvm/default.lock": LOCKFILE_WITH_CLOJURE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "3rdparty/jvm/default.lock": CLOJURE_LOCKFILE,
             "BUILD": 'clojure_sources(dependencies=["3rdparty/jvm:org.clojure_clojure"])',
             "example.clj": dedent(
                 """\
@@ -217,17 +112,8 @@ def test_check_syntax_error(rule_runner: RuleRunner) -> None:
     """Test that syntax errors cause check to fail."""
     rule_runner.write_files(
         {
-            "3rdparty/jvm/BUILD": dedent(
-                """\
-                jvm_artifact(
-                    name="org.clojure_clojure",
-                    group="org.clojure",
-                    artifact="clojure",
-                    version="1.11.0",
-                )
-                """
-            ),
-            "3rdparty/jvm/default.lock": LOCKFILE_WITH_CLOJURE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "3rdparty/jvm/default.lock": CLOJURE_LOCKFILE,
             "BUILD": 'clojure_sources(dependencies=["3rdparty/jvm:org.clojure_clojure"])',
             "bad.clj": dedent(
                 """\
@@ -249,17 +135,8 @@ def test_check_undefined_symbol(rule_runner: RuleRunner) -> None:
     """Test that undefined symbols cause check to fail."""
     rule_runner.write_files(
         {
-            "3rdparty/jvm/BUILD": dedent(
-                """\
-                jvm_artifact(
-                    name="org.clojure_clojure",
-                    group="org.clojure",
-                    artifact="clojure",
-                    version="1.11.0",
-                )
-                """
-            ),
-            "3rdparty/jvm/default.lock": LOCKFILE_WITH_CLOJURE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "3rdparty/jvm/default.lock": CLOJURE_LOCKFILE,
             "BUILD": 'clojure_sources(dependencies=["3rdparty/jvm:org.clojure_clojure"])',
             "undef.clj": dedent(
                 """\
@@ -279,17 +156,8 @@ def test_check_java_interop(rule_runner: RuleRunner) -> None:
     """Test that Java interop works in check."""
     rule_runner.write_files(
         {
-            "3rdparty/jvm/BUILD": dedent(
-                """\
-                jvm_artifact(
-                    name="org.clojure_clojure",
-                    group="org.clojure",
-                    artifact="clojure",
-                    version="1.11.0",
-                )
-                """
-            ),
-            "3rdparty/jvm/default.lock": LOCKFILE_WITH_CLOJURE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "3rdparty/jvm/default.lock": CLOJURE_LOCKFILE,
             "BUILD": 'clojure_sources(dependencies=["3rdparty/jvm:org.clojure_clojure"])',
             "java_interop.clj": dedent(
                 """\
@@ -312,17 +180,8 @@ def test_check_skip_option(rule_runner: RuleRunner) -> None:
     """Test that --clojure-check-skip skips checking."""
     rule_runner.write_files(
         {
-            "3rdparty/jvm/BUILD": dedent(
-                """\
-                jvm_artifact(
-                    name="org.clojure_clojure",
-                    group="org.clojure",
-                    artifact="clojure",
-                    version="1.11.0",
-                )
-                """
-            ),
-            "3rdparty/jvm/default.lock": LOCKFILE_WITH_CLOJURE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "3rdparty/jvm/default.lock": CLOJURE_LOCKFILE,
             "BUILD": 'clojure_sources(dependencies=["3rdparty/jvm:org.clojure_clojure"])',
             "bad.clj": "(ns bad) (defn broken",
         }
@@ -343,17 +202,8 @@ def test_check_detects_arity_mismatch(rule_runner: RuleRunner) -> None:
     """Test that check detects function calls with wrong arity."""
     rule_runner.write_files(
         {
-            "3rdparty/jvm/BUILD": dedent(
-                """\
-                jvm_artifact(
-                    name="org.clojure_clojure",
-                    group="org.clojure",
-                    artifact="clojure",
-                    version="1.11.0",
-                )
-                """
-            ),
-            "3rdparty/jvm/default.lock": LOCKFILE_WITH_CLOJURE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "3rdparty/jvm/default.lock": CLOJURE_LOCKFILE,
             "BUILD": 'clojure_sources(dependencies=["3rdparty/jvm:org.clojure_clojure"])',
             "arity_error.clj": dedent(
                 """\
@@ -379,17 +229,8 @@ def test_check_with_macro_usage(rule_runner: RuleRunner) -> None:
     """Test checking code that uses macros."""
     rule_runner.write_files(
         {
-            "3rdparty/jvm/BUILD": dedent(
-                """\
-                jvm_artifact(
-                    name="org.clojure_clojure",
-                    group="org.clojure",
-                    artifact="clojure",
-                    version="1.11.0",
-                )
-                """
-            ),
-            "3rdparty/jvm/default.lock": LOCKFILE_WITH_CLOJURE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "3rdparty/jvm/default.lock": CLOJURE_LOCKFILE,
             "BUILD": 'clojure_sources(dependencies=["3rdparty/jvm:org.clojure_clojure"])',
             "macros.clj": dedent(
                 """\

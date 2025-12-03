@@ -36,115 +36,7 @@ from pants.jvm.target_types import JvmArtifactTarget
 from pants.jvm.util_rules import rules as jdk_util_rules
 from pants.testutil.rule_runner import PYTHON_BOOTSTRAP_ENV, RuleRunner
 
-
-# Lockfile with Clojure for deploy JAR tests
-# Now that we rely on the user's classpath to provide Clojure (instead of fetching
-# it via ToolClasspathRequest), the tests need Clojure in the lockfile.
-# Using version 1.11.0 with correct fingerprints.
-LOCKFILE_WITH_CLOJURE_ONLY = """\
-# --- BEGIN PANTS LOCKFILE METADATA: DO NOT EDIT OR REMOVE ---
-# {
-#   "version": 1,
-#   "generated_with_requirements": [
-#     "org.clojure:clojure:1.11.0,url=not_provided,jar=not_provided"
-#   ]
-# }
-# --- END PANTS LOCKFILE METADATA ---
-
-[[entries]]
-file_name = "org.clojure_clojure_1.11.0.jar"
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "core.specs.alpha"
-version = "0.2.62"
-packaging = "jar"
-
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "spec.alpha"
-version = "0.3.218"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "core.specs.alpha"
-version = "0.2.62"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "spec.alpha"
-version = "0.3.218"
-packaging = "jar"
-
-
-[entries.coord]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-[entries.file_digest]
-fingerprint = "3e21fa75a07ec9ddbbf1b2b50356cf180710d0398deaa4f44e91cd6304555947"
-serialized_bytes_length = 4105010
-
-[[entries]]
-file_name = "org.clojure_core.specs.alpha_0.2.62.jar"
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-
-[entries.coord]
-group = "org.clojure"
-artifact = "core.specs.alpha"
-version = "0.2.62"
-packaging = "jar"
-[entries.file_digest]
-fingerprint = "06eea8c070bbe45c158567e443439681bc8c46e9123414f81bfa32ba42d6cbc8"
-serialized_bytes_length = 4325
-
-[[entries]]
-file_name = "org.clojure_spec.alpha_0.3.218.jar"
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-
-[entries.coord]
-group = "org.clojure"
-artifact = "spec.alpha"
-version = "0.3.218"
-packaging = "jar"
-[entries.file_digest]
-fingerprint = "67ec898eb55c66a957a55279dd85d1376bb994bd87668b2b0de1eb3b97e8aae0"
-serialized_bytes_length = 635617
-"""
-
-# Common BUILD file for 3rdparty Clojure dependency
-CLOJURE_3RDPARTY_BUILD = """\
-jvm_artifact(
-    name="org.clojure_clojure",
-    group="org.clojure",
-    artifact="clojure",
-    version="1.11.0",
-)
-"""
+from .clojure_test_fixtures import CLOJURE_LOCKFILE, CLOJURE_3RDPARTY_BUILD, CLOJURE_VERSION, LOCKFILE_WITH_JSR305
 
 _JVM_RESOLVES = {
     "java17": "locks/jvm/java17.lock.jsonc",
@@ -196,7 +88,7 @@ def test_package_simple_deploy_jar(rule_runner: RuleRunner) -> None:
     setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
             "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/hello/BUILD": dedent(
                 """\
@@ -241,7 +133,7 @@ def test_package_deploy_jar_validates_gen_class(rule_runner: RuleRunner) -> None
     setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
             "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/bad/BUILD": dedent(
                 """\
@@ -290,7 +182,7 @@ def test_package_deploy_jar_with_aot_all(rule_runner: RuleRunner) -> None:
     setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
             "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/app/BUILD": dedent(
                 """\
@@ -348,7 +240,7 @@ def test_package_deploy_jar_with_selective_aot(rule_runner: RuleRunner) -> None:
     setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
             "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/myapp/BUILD": dedent(
                 """\
@@ -425,7 +317,7 @@ def test_package_deploy_jar_with_custom_gen_class_name(rule_runner: RuleRunner) 
     setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
             "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/custom/BUILD": dedent(
                 """\
@@ -469,7 +361,7 @@ def test_package_deploy_jar_missing_main_namespace(rule_runner: RuleRunner) -> N
     setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
             "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/missing/BUILD": dedent(
                 """\
@@ -501,7 +393,7 @@ def test_package_deploy_jar_with_transitive_dependencies(rule_runner: RuleRunner
     setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
             "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/lib/BUILD": dedent(
                 """\
@@ -561,7 +453,7 @@ def test_provided_field_can_be_parsed(rule_runner: RuleRunner) -> None:
     setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
             "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/lib/BUILD": dedent(
                 """\
@@ -628,7 +520,7 @@ def test_provided_dependencies_excluded_from_jar(rule_runner: RuleRunner) -> Non
     setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
-            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_CLOJURE_ONLY,
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
             "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
             "src/api/BUILD": dedent(
                 """\
@@ -733,120 +625,6 @@ def test_provided_dependencies_excluded_from_jar(rule_runner: RuleRunner) -> Non
         f"Provided dependency api.interface should NOT be in JAR, but found: {api_entries}"
 
 
-# Lockfile content for third-party JAR test
-# Contains jsr305 (small JAR, good for testing) and its dependencies
-LOCKFILE_WITH_JSR305 = """\
-# This lockfile was autogenerated by Pants. To regenerate, run:
-#
-#    pants generate-lockfiles
-#
-# --- BEGIN PANTS LOCKFILE METADATA: DO NOT EDIT OR REMOVE ---
-# {
-#   "version": 1,
-#   "generated_with_requirements": [
-#     "com.google.code.findbugs:jsr305:3.0.2,url=not_provided,jar=not_provided",
-#     "org.clojure:clojure:1.11.0,url=not_provided,jar=not_provided"
-#   ]
-# }
-# --- END PANTS LOCKFILE METADATA ---
-
-[[entries]]
-directDependencies = []
-dependencies = []
-file_name = "com.google.code.findbugs_jsr305_3.0.2.jar"
-
-[entries.coord]
-group = "com.google.code.findbugs"
-artifact = "jsr305"
-version = "3.0.2"
-packaging = "jar"
-[entries.file_digest]
-fingerprint = "766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7"
-serialized_bytes_length = 19936
-[[entries]]
-file_name = "org.clojure_clojure_1.11.0.jar"
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "core.specs.alpha"
-version = "0.2.62"
-packaging = "jar"
-
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "spec.alpha"
-version = "0.3.218"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "core.specs.alpha"
-version = "0.2.62"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "spec.alpha"
-version = "0.3.218"
-packaging = "jar"
-
-
-[entries.coord]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-[entries.file_digest]
-fingerprint = "3e21fa75a07ec9ddbbf1b2b50356cf180710d0398deaa4f44e91cd6304555947"
-serialized_bytes_length = 4105010
-[[entries]]
-file_name = "org.clojure_core.specs.alpha_0.2.62.jar"
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-
-[entries.coord]
-group = "org.clojure"
-artifact = "core.specs.alpha"
-version = "0.2.62"
-packaging = "jar"
-[entries.file_digest]
-fingerprint = "06eea8c070bbe45c158567e443439681bc8c46e9123414f81bfa32ba42d6cbc8"
-serialized_bytes_length = 4325
-[[entries]]
-file_name = "org.clojure_spec.alpha_0.3.218.jar"
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-
-[entries.coord]
-group = "org.clojure"
-artifact = "spec.alpha"
-version = "0.3.218"
-packaging = "jar"
-[entries.file_digest]
-fingerprint = "67ec898eb55c66a957a55279dd85d1376bb994bd87668b2b0de1eb3b97e8aae0"
-serialized_bytes_length = 635617
-"""
-
-
 def test_provided_jvm_artifact_excluded_from_jar(rule_runner: RuleRunner) -> None:
     """Test that provided jvm_artifact (third-party) dependencies are excluded from the final JAR.
 
@@ -861,7 +639,7 @@ def test_provided_jvm_artifact_excluded_from_jar(rule_runner: RuleRunner) -> Non
         {
             "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_JSR305,
             "src/app/BUILD": dedent(
-                """\
+                f"""\
                 jvm_artifact(
                     name="jsr305",
                     group="com.google.code.findbugs",
@@ -873,7 +651,7 @@ def test_provided_jvm_artifact_excluded_from_jar(rule_runner: RuleRunner) -> Non
                     name="clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.11.0",
+                    version="{CLOJURE_VERSION}",
                 )
 
                 clojure_source(
@@ -936,116 +714,6 @@ def test_provided_jvm_artifact_excluded_from_jar(rule_runner: RuleRunner) -> Non
         f"Provided jvm_artifact jsr305 should NOT be in JAR, but found: {jsr305_entries}"
 
 
-# Lockfile with Clojure and its transitive dependencies (spec.alpha, core.specs.alpha)
-# Used to verify that Maven transitives are excluded from the JAR
-LOCKFILE_WITH_CLOJURE = """\
-# --- BEGIN PANTS LOCKFILE METADATA: DO NOT EDIT OR REMOVE ---
-# {
-#   "version": 1,
-#   "generated_with_requirements": [
-#     "org.clojure:clojure:1.11.0,url=not_provided,jar=not_provided"
-#   ]
-# }
-# --- END PANTS LOCKFILE METADATA ---
-
-[[entries]]
-file_name = "org.clojure_clojure_1.11.0.jar"
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "core.specs.alpha"
-version = "0.2.62"
-packaging = "jar"
-
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "spec.alpha"
-version = "0.3.218"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "core.specs.alpha"
-version = "0.2.62"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "spec.alpha"
-version = "0.3.218"
-packaging = "jar"
-
-
-[entries.coord]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-[entries.file_digest]
-fingerprint = "3e21fa75a07ec9ddbbf1b2b50356cf180710d0398deaa4f44e91cd6304555947"
-serialized_bytes_length = 4105010
-
-[[entries]]
-file_name = "org.clojure_core.specs.alpha_0.2.62.jar"
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "spec.alpha"
-version = "0.3.218"
-packaging = "jar"
-
-
-[entries.coord]
-group = "org.clojure"
-artifact = "core.specs.alpha"
-version = "0.2.62"
-packaging = "jar"
-[entries.file_digest]
-fingerprint = "06eea8c070bbe45c158567e443439681bc8c46e9123414f81bfa32ba42d6cbc8"
-serialized_bytes_length = 4325
-
-[[entries]]
-file_name = "org.clojure_spec.alpha_0.3.218.jar"
-[[entries.directDependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "clojure"
-version = "1.11.0"
-packaging = "jar"
-
-[[entries.dependencies]]
-group = "org.clojure"
-artifact = "core.specs.alpha"
-version = "0.2.62"
-packaging = "jar"
-
-
-[entries.coord]
-group = "org.clojure"
-artifact = "spec.alpha"
-version = "0.3.218"
-packaging = "jar"
-[entries.file_digest]
-fingerprint = "67ec898eb55c66a957a55279dd85d1376bb994bd87668b2b0de1eb3b97e8aae0"
-serialized_bytes_length = 635617
-"""
-
-
 def test_provided_maven_transitives_excluded_from_jar(rule_runner: RuleRunner) -> None:
     """Test that Maven transitive dependencies of provided artifacts are excluded from JAR.
 
@@ -1068,12 +736,12 @@ def test_provided_maven_transitives_excluded_from_jar(rule_runner: RuleRunner) -
         {
             "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_JSR305,
             "src/app/BUILD": dedent(
-                """\
+                f"""\
                 jvm_artifact(
                     name="clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.11.0",
+                    version="{CLOJURE_VERSION}",
                 )
 
                 clojure_source(

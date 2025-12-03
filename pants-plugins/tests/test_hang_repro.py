@@ -52,6 +52,8 @@ from pants.jvm.resolve.coursier_setup import rules as coursier_setup_rules
 from pants.jvm.target_types import JvmArtifactTarget
 from pants.jvm.util_rules import rules as jdk_util_rules
 from pants.testutil.rule_runner import PYTHON_BOOTSTRAP_ENV, QueryRule, RuleRunner
+from pants.jvm.classpath import Classpath
+from pants.engine.addresses import Addresses
 
 
 # Lockfile with Clojure 1.12.3 and correct fingerprints
@@ -174,6 +176,7 @@ def rule_runner() -> RuleRunner:
             *check_goal.rules(),
             *lockfile.rules(),
             QueryRule(CheckResults, [ClojureCheckRequest]),
+            QueryRule(Classpath, [Addresses]),
         ],
         target_types=[
             ClojureSourceTarget,
@@ -239,3 +242,142 @@ def test_check_with_clojure_dependency(rule_runner: RuleRunner) -> None:
 
     assert len(results.results) == 1
     assert results.results[0].exit_code == 0
+
+
+# =============================================================================
+# PROGRESSIVE TEST VARIANTS FOR BISECTION (Phase 1 of debugging plan)
+# =============================================================================
+
+
+def test_a_targets_only(rule_runner: RuleRunner) -> None:
+    """Test A: Just create targets (no rule execution).
+
+    If this hangs -> target parsing issue
+    """
+    rule_runner.write_files(
+        {
+            "3rdparty/jvm/BUILD": dedent(
+                """\
+                jvm_artifact(
+                    name="org.clojure_clojure",
+                    group="org.clojure",
+                    artifact="clojure",
+                    version="1.12.3",
+                )
+                """
+            ),
+            "3rdparty/jvm/default.lock": LOCKFILE_WITH_CLOJURE,
+            "BUILD": 'clojure_source(name="example", source="example.clj", dependencies=["3rdparty/jvm:org.clojure_clojure"])',
+            "example.clj": dedent(
+                """\
+                (ns example)
+                (defn greet [name]
+                  (str "Hello, " name))
+                """
+            ),
+        }
+    )
+
+    args = [
+        f"--jvm-resolves={repr(_JVM_RESOLVES)}",
+        "--jvm-default-resolve=jvm-default",
+    ]
+    rule_runner.set_options(args, env_inherit=PYTHON_BOOTSTRAP_ENV)
+
+    # Just get the target - no rule execution
+    tgt = rule_runner.get_target(Address(spec_path="", target_name="example"))
+    assert tgt is not None
+    print(f"Target created successfully: {tgt}")
+
+
+def test_b_classpath_only(rule_runner: RuleRunner) -> None:
+    """Test C: Resolve classpath without check goal.
+
+    If this hangs -> classpath/coursier issue
+    """
+    rule_runner.write_files(
+        {
+            "3rdparty/jvm/BUILD": dedent(
+                """\
+                jvm_artifact(
+                    name="org.clojure_clojure",
+                    group="org.clojure",
+                    artifact="clojure",
+                    version="1.12.3",
+                )
+                """
+            ),
+            "3rdparty/jvm/default.lock": LOCKFILE_WITH_CLOJURE,
+            "BUILD": 'clojure_source(name="example", source="example.clj", dependencies=["3rdparty/jvm:org.clojure_clojure"])',
+            "example.clj": dedent(
+                """\
+                (ns example)
+                (defn greet [name]
+                  (str "Hello, " name))
+                """
+            ),
+        }
+    )
+
+    args = [
+        f"--jvm-resolves={repr(_JVM_RESOLVES)}",
+        "--jvm-default-resolve=jvm-default",
+    ]
+    rule_runner.set_options(args, env_inherit=PYTHON_BOOTSTRAP_ENV)
+
+    # Resolve classpath
+    classpath = rule_runner.request(
+        Classpath,
+        [Addresses([Address(spec_path="", target_name="example")])]
+    )
+    print(f"Classpath entries: {classpath.args()}")
+    assert classpath is not None
+
+
+def test_c_check_no_artifact_dep(rule_runner: RuleRunner) -> None:
+    """Test D: Check goal with clojure_source but NO jvm_artifact dependency.
+
+    If this hangs -> check goal issue unrelated to artifacts
+    """
+    rule_runner.write_files(
+        {
+            "3rdparty/jvm/BUILD": dedent(
+                """\
+                jvm_artifact(
+                    name="org.clojure_clojure",
+                    group="org.clojure",
+                    artifact="clojure",
+                    version="1.12.3",
+                )
+                """
+            ),
+            "3rdparty/jvm/default.lock": LOCKFILE_WITH_CLOJURE,
+            # NOTE: No dependencies field - no jvm_artifact dependency
+            "BUILD": 'clojure_source(name="example", source="example.clj")',
+            "example.clj": dedent(
+                """\
+                (ns example)
+                (defn greet [name]
+                  (str "Hello, " name))
+                """
+            ),
+        }
+    )
+
+    args = [
+        f"--jvm-resolves={repr(_JVM_RESOLVES)}",
+        "--jvm-default-resolve=jvm-default",
+    ]
+    rule_runner.set_options(args, env_inherit=PYTHON_BOOTSTRAP_ENV)
+    tgt = rule_runner.get_target(Address(spec_path="", target_name="example"))
+    field_set = ClojureCheckFieldSet.create(tgt)
+
+    # Run check goal - no artifact dependency
+    results = rule_runner.request(
+        CheckResults,
+        [ClojureCheckRequest([field_set])],
+    )
+
+    # This may fail because Clojure isn't on classpath, but it shouldn't hang
+    print(f"Check results: {results}")
+    assert len(results.results) == 1
