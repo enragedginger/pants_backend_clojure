@@ -85,13 +85,13 @@ _CLOJURE_LOCKFILE = dedent(
     # {
     #   "version": 1,
     #   "generated_with_requirements": [
-    #     "org.clojure:clojure:1.12.0,url=not_provided,jar=not_provided"
+    #     "org.clojure:clojure:1.12.3,url=not_provided,jar=not_provided"
     #   ]
     # }
     # --- END PANTS LOCKFILE METADATA ---
 
     [[entries]]
-    file_name = "org.clojure_clojure_1.12.0.jar"
+    file_name = "org.clojure_clojure_1.12.3.jar"
     [[entries.directDependencies]]
     group = "org.clojure"
     artifact = "core.specs.alpha"
@@ -120,7 +120,7 @@ _CLOJURE_LOCKFILE = dedent(
     [entries.coord]
     group = "org.clojure"
     artifact = "clojure"
-    version = "1.12.0"
+    version = "1.12.3"
     packaging = "jar"
     [entries.file_digest]
     fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
@@ -130,13 +130,13 @@ _CLOJURE_LOCKFILE = dedent(
     [[entries.directDependencies]]
     group = "org.clojure"
     artifact = "clojure"
-    version = "1.12.0"
+    version = "1.12.3"
     packaging = "jar"
 
     [[entries.dependencies]]
     group = "org.clojure"
     artifact = "clojure"
-    version = "1.12.0"
+    version = "1.12.3"
     packaging = "jar"
 
 
@@ -153,13 +153,13 @@ _CLOJURE_LOCKFILE = dedent(
     [[entries.directDependencies]]
     group = "org.clojure"
     artifact = "clojure"
-    version = "1.12.0"
+    version = "1.12.3"
     packaging = "jar"
 
     [[entries.dependencies]]
     group = "org.clojure"
     artifact = "clojure"
-    version = "1.12.0"
+    version = "1.12.3"
     packaging = "jar"
 
 
@@ -184,7 +184,7 @@ def test_parse_lock_file() -> None:
     # Check first entry
     assert entries[0].group == "org.clojure"
     assert entries[0].artifact == "clojure"
-    assert entries[0].version == "1.12.0"
+    assert entries[0].version == "1.12.3"
     assert entries[0].packaging == "jar"
 
     # Check that all expected artifacts are present
@@ -224,7 +224,7 @@ def test_parse_lock_file_empty() -> None:
 def test_format_deps_edn_deps() -> None:
     """Test formatting lock entries as deps.edn :deps map."""
     entries = [
-        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.0"),
+        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.3"),
         LockFileEntry(group="com.google.guava", artifact="guava", version="33.0.0-jre"),
     ]
 
@@ -236,7 +236,7 @@ def test_format_deps_edn_deps() -> None:
 
     # Check content (order is alphabetical by group/artifact)
     assert 'com.google.guava/guava {:mvn/version "33.0.0-jre" :exclusions [*/*]}' in result
-    assert 'org.clojure/clojure {:mvn/version "1.12.0" :exclusions [*/*]}' in result
+    assert 'org.clojure/clojure {:mvn/version "1.12.3" :exclusions [*/*]}' in result
 
     # Verify :exclusions [*/*] is present
     assert ":exclusions [*/*]" in result
@@ -272,7 +272,7 @@ def test_format_deps_edn_deps_handles_duplicate_artifacts() -> None:
     This provides deterministic output.
     """
     entries = [
-        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.0"),
+        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.3"),
         LockFileEntry(group="org.clojure", artifact="clojure", version="1.11.0"),  # Duplicate
         LockFileEntry(group="com.google.guava", artifact="guava", version="33.0.0-jre"),
         LockFileEntry(group="com.google.guava", artifact="guava", version="32.0.0-jre"),  # Duplicate
@@ -289,9 +289,9 @@ def test_format_deps_edn_deps_handles_duplicate_artifacts() -> None:
 
     # Verify that the first version (after sorting by group/artifact) is kept
     # The sort is by (group, artifact) only, so within duplicates, original order is preserved
-    # (Python's sort is stable). We should have 1.12.0 for clojure (first in input)
+    # (Python's sort is stable). We should have 1.12.3 for clojure (first in input)
     # and 33.0.0-jre for guava (first in input)
-    assert '1.12.0' in result, "Expected version 1.12.0 (first occurrence in input list)"
+    assert '1.12.3' in result, "Expected version 1.12.3 (first occurrence in input list)"
     assert '33.0.0-jre' in result, "Expected version 33.0.0-jre (first occurrence in input list)"
     assert '1.11.0' not in result, "Should not contain duplicate version 1.11.0"
     assert '32.0.0-jre' not in result, "Should not contain duplicate version 32.0.0-jre"
@@ -300,9 +300,9 @@ def test_format_deps_edn_deps_handles_duplicate_artifacts() -> None:
 def test_format_deps_edn_deps_duplicate_same_version() -> None:
     """Test that duplicate entries with identical versions produce single entry."""
     entries = [
-        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.0"),
-        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.0"),  # Exact duplicate
-        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.0"),  # Another duplicate
+        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.3"),
+        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.3"),  # Exact duplicate
+        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.3"),  # Another duplicate
     ]
 
     result = format_deps_edn_deps(entries)
@@ -312,7 +312,7 @@ def test_format_deps_edn_deps_duplicate_same_version() -> None:
     assert clojure_count == 1, f"Expected 1 org.clojure/clojure entry, found {clojure_count}"
 
     # Verify the correct version is present
-    assert '1.12.0' in result
+    assert '1.12.3' in result
 
 
 def test_format_deps_edn_complete() -> None:
@@ -325,7 +325,7 @@ def test_format_deps_edn_complete() -> None:
     )
 
     deps_entries = [
-        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.0"),
+        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.3"),
     ]
 
     result = format_deps_edn(sources_info, deps_entries, "java21")
@@ -352,7 +352,7 @@ def test_format_deps_edn_complete() -> None:
     assert 'com.bhauman/rebel-readline {:mvn/version "0.1.4"' in result
 
     # Check dependency format
-    assert 'org.clojure/clojure {:mvn/version "1.12.0" :exclusions [*/*]}' in result
+    assert 'org.clojure/clojure {:mvn/version "1.12.3" :exclusions [*/*]}' in result
 
 
 def test_format_deps_edn_no_test_paths() -> None:
@@ -365,7 +365,7 @@ def test_format_deps_edn_no_test_paths() -> None:
     )
 
     deps_entries = [
-        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.0"),
+        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.3"),
     ]
 
     result = format_deps_edn(sources_info, deps_entries, "java21")
@@ -468,7 +468,7 @@ def test_format_deps_edn_with_repos() -> None:
     )
 
     deps_entries = [
-        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.0"),
+        LockFileEntry(group="org.clojure", artifact="clojure", version="1.12.3"),
     ]
 
     repos = (
@@ -536,7 +536,7 @@ def test_generate_deps_edn_simple_project(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -590,7 +590,7 @@ def test_generate_deps_edn_multiple_sources(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -660,7 +660,7 @@ def test_generate_deps_edn_with_tests(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -761,7 +761,7 @@ def test_generate_deps_edn_nested_source_dirs(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),

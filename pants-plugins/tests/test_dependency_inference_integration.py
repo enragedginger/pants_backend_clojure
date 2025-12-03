@@ -110,7 +110,7 @@ def test_infer_clojure_source_dependency(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -188,7 +188,7 @@ def test_infer_clojure_test_dependency(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),

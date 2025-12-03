@@ -99,7 +99,7 @@ def test_simple_passing_test(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -113,13 +113,13 @@ def test_simple_passing_test(rule_runner: RuleRunner) -> None:
                 # {
                 #   "version": 1,
                 #   "generated_with_requirements": [
-                #     "org.clojure:clojure:1.12.0,url=not_provided,jar=not_provided"
+                #     "org.clojure:clojure:1.12.3,url=not_provided,jar=not_provided"
                 #   ]
                 # }
                 # --- END PANTS LOCKFILE METADATA ---
 
                 [[entries]]
-                file_name = "org.clojure_clojure_1.12.0.jar"
+                file_name = "org.clojure_clojure_1.12.3.jar"
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "core.specs.alpha"
@@ -148,7 +148,7 @@ def test_simple_passing_test(rule_runner: RuleRunner) -> None:
                 [entries.coord]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
                 fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
@@ -158,13 +158,13 @@ def test_simple_passing_test(rule_runner: RuleRunner) -> None:
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 
@@ -181,13 +181,13 @@ def test_simple_passing_test(rule_runner: RuleRunner) -> None:
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 
@@ -242,7 +242,7 @@ def test_simple_failing_test(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -256,13 +256,13 @@ def test_simple_failing_test(rule_runner: RuleRunner) -> None:
                 # {
                 #   "version": 1,
                 #   "generated_with_requirements": [
-                #     "org.clojure:clojure:1.12.0,url=not_provided,jar=not_provided"
+                #     "org.clojure:clojure:1.12.3,url=not_provided,jar=not_provided"
                 #   ]
                 # }
                 # --- END PANTS LOCKFILE METADATA ---
 
                 [[entries]]
-                file_name = "org.clojure_clojure_1.12.0.jar"
+                file_name = "org.clojure_clojure_1.12.3.jar"
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "core.specs.alpha"
@@ -291,7 +291,7 @@ def test_simple_failing_test(rule_runner: RuleRunner) -> None:
                 [entries.coord]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
                 fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
@@ -301,13 +301,13 @@ def test_simple_failing_test(rule_runner: RuleRunner) -> None:
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 
@@ -324,13 +324,13 @@ def test_simple_failing_test(rule_runner: RuleRunner) -> None:
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 
@@ -383,7 +383,7 @@ def test_test_with_timeout(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -397,13 +397,13 @@ def test_test_with_timeout(rule_runner: RuleRunner) -> None:
                 # {
                 #   "version": 1,
                 #   "generated_with_requirements": [
-                #     "org.clojure:clojure:1.12.0,url=not_provided,jar=not_provided"
+                #     "org.clojure:clojure:1.12.3,url=not_provided,jar=not_provided"
                 #   ]
                 # }
                 # --- END PANTS LOCKFILE METADATA ---
 
                 [[entries]]
-                file_name = "org.clojure_clojure_1.12.0.jar"
+                file_name = "org.clojure_clojure_1.12.3.jar"
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "core.specs.alpha"
@@ -432,7 +432,7 @@ def test_test_with_timeout(rule_runner: RuleRunner) -> None:
                 [entries.coord]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
                 fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
@@ -442,13 +442,13 @@ def test_test_with_timeout(rule_runner: RuleRunner) -> None:
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 
@@ -465,13 +465,13 @@ def test_test_with_timeout(rule_runner: RuleRunner) -> None:
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 
@@ -524,7 +524,7 @@ def test_test_with_clojure_source_dependencies(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -538,13 +538,13 @@ def test_test_with_clojure_source_dependencies(rule_runner: RuleRunner) -> None:
                 # {
                 #   "version": 1,
                 #   "generated_with_requirements": [
-                #     "org.clojure:clojure:1.12.0,url=not_provided,jar=not_provided"
+                #     "org.clojure:clojure:1.12.3,url=not_provided,jar=not_provided"
                 #   ]
                 # }
                 # --- END PANTS LOCKFILE METADATA ---
 
                 [[entries]]
-                file_name = "org.clojure_clojure_1.12.0.jar"
+                file_name = "org.clojure_clojure_1.12.3.jar"
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "core.specs.alpha"
@@ -573,7 +573,7 @@ def test_test_with_clojure_source_dependencies(rule_runner: RuleRunner) -> None:
                 [entries.coord]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
                 fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
@@ -583,13 +583,13 @@ def test_test_with_clojure_source_dependencies(rule_runner: RuleRunner) -> None:
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 
@@ -606,13 +606,13 @@ def test_test_with_clojure_source_dependencies(rule_runner: RuleRunner) -> None:
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 
@@ -690,7 +690,7 @@ def test_test_failure_with_assertion_message(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -704,13 +704,13 @@ def test_test_failure_with_assertion_message(rule_runner: RuleRunner) -> None:
                 # {
                 #   "version": 1,
                 #   "generated_with_requirements": [
-                #     "org.clojure:clojure:1.12.0,url=not_provided,jar=not_provided"
+                #     "org.clojure:clojure:1.12.3,url=not_provided,jar=not_provided"
                 #   ]
                 # }
                 # --- END PANTS LOCKFILE METADATA ---
 
                 [[entries]]
-                file_name = "org.clojure_clojure_1.12.0.jar"
+                file_name = "org.clojure_clojure_1.12.3.jar"
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "core.specs.alpha"
@@ -739,7 +739,7 @@ def test_test_failure_with_assertion_message(rule_runner: RuleRunner) -> None:
                 [entries.coord]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
                 fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
@@ -749,13 +749,13 @@ def test_test_failure_with_assertion_message(rule_runner: RuleRunner) -> None:
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 
@@ -772,13 +772,13 @@ def test_test_failure_with_assertion_message(rule_runner: RuleRunner) -> None:
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 
@@ -832,7 +832,7 @@ def test_test_with_extra_env_vars(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -846,13 +846,13 @@ def test_test_with_extra_env_vars(rule_runner: RuleRunner) -> None:
                 # {
                 #   "version": 1,
                 #   "generated_with_requirements": [
-                #     "org.clojure:clojure:1.12.0,url=not_provided,jar=not_provided"
+                #     "org.clojure:clojure:1.12.3,url=not_provided,jar=not_provided"
                 #   ]
                 # }
                 # --- END PANTS LOCKFILE METADATA ---
 
                 [[entries]]
-                file_name = "org.clojure_clojure_1.12.0.jar"
+                file_name = "org.clojure_clojure_1.12.3.jar"
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "core.specs.alpha"
@@ -881,7 +881,7 @@ def test_test_with_extra_env_vars(rule_runner: RuleRunner) -> None:
                 [entries.coord]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
                 fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
@@ -891,13 +891,13 @@ def test_test_with_extra_env_vars(rule_runner: RuleRunner) -> None:
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 
@@ -914,13 +914,13 @@ def test_test_with_extra_env_vars(rule_runner: RuleRunner) -> None:
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 
@@ -976,7 +976,7 @@ def test_missing_namespace_declaration_fails(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -990,13 +990,13 @@ def test_missing_namespace_declaration_fails(rule_runner: RuleRunner) -> None:
                 # {
                 #   "version": 1,
                 #   "generated_with_requirements": [
-                #     "org.clojure:clojure:1.12.0,url=not_provided,jar=not_provided"
+                #     "org.clojure:clojure:1.12.3,url=not_provided,jar=not_provided"
                 #   ]
                 # }
                 # --- END PANTS LOCKFILE METADATA ---
 
                 [[entries]]
-                file_name = "org.clojure_clojure_1.12.0.jar"
+                file_name = "org.clojure_clojure_1.12.3.jar"
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "core.specs.alpha"
@@ -1025,7 +1025,7 @@ def test_missing_namespace_declaration_fails(rule_runner: RuleRunner) -> None:
                 [entries.coord]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
                 fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
@@ -1035,13 +1035,13 @@ def test_missing_namespace_declaration_fails(rule_runner: RuleRunner) -> None:
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 
@@ -1058,13 +1058,13 @@ def test_missing_namespace_declaration_fails(rule_runner: RuleRunner) -> None:
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 
@@ -1122,7 +1122,7 @@ def test_syntax_error_in_test_fails_with_message(rule_runner: RuleRunner) -> Non
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -1136,13 +1136,13 @@ def test_syntax_error_in_test_fails_with_message(rule_runner: RuleRunner) -> Non
                 # {
                 #   "version": 1,
                 #   "generated_with_requirements": [
-                #     "org.clojure:clojure:1.12.0,url=not_provided,jar=not_provided"
+                #     "org.clojure:clojure:1.12.3,url=not_provided,jar=not_provided"
                 #   ]
                 # }
                 # --- END PANTS LOCKFILE METADATA ---
 
                 [[entries]]
-                file_name = "org.clojure_clojure_1.12.0.jar"
+                file_name = "org.clojure_clojure_1.12.3.jar"
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "core.specs.alpha"
@@ -1171,7 +1171,7 @@ def test_syntax_error_in_test_fails_with_message(rule_runner: RuleRunner) -> Non
                 [entries.coord]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
                 [entries.file_digest]
                 fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
@@ -1181,13 +1181,13 @@ def test_syntax_error_in_test_fails_with_message(rule_runner: RuleRunner) -> Non
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 
@@ -1204,13 +1204,13 @@ def test_syntax_error_in_test_fails_with_message(rule_runner: RuleRunner) -> Non
                 [[entries.directDependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
                 [[entries.dependencies]]
                 group = "org.clojure"
                 artifact = "clojure"
-                version = "1.12.0"
+                version = "1.12.3"
                 packaging = "jar"
 
 

@@ -78,13 +78,13 @@ _CLOJURE_LOCKFILE = dedent(
     # {
     #   "version": 1,
     #   "generated_with_requirements": [
-    #     "org.clojure:clojure:1.12.0,url=not_provided,jar=not_provided"
+    #     "org.clojure:clojure:1.12.3,url=not_provided,jar=not_provided"
     #   ]
     # }
     # --- END PANTS LOCKFILE METADATA ---
 
     [[entries]]
-    file_name = "org.clojure_clojure_1.12.0.jar"
+    file_name = "org.clojure_clojure_1.12.3.jar"
     [[entries.directDependencies]]
     group = "org.clojure"
     artifact = "core.specs.alpha"
@@ -113,7 +113,7 @@ _CLOJURE_LOCKFILE = dedent(
     [entries.coord]
     group = "org.clojure"
     artifact = "clojure"
-    version = "1.12.0"
+    version = "1.12.3"
     packaging = "jar"
     [entries.file_digest]
     fingerprint = "c45333006441a059ea9fdb1341fc6c1f40b921a10dccd82665311e48a0384763"
@@ -123,13 +123,13 @@ _CLOJURE_LOCKFILE = dedent(
     [[entries.directDependencies]]
     group = "org.clojure"
     artifact = "clojure"
-    version = "1.12.0"
+    version = "1.12.3"
     packaging = "jar"
 
     [[entries.dependencies]]
     group = "org.clojure"
     artifact = "clojure"
-    version = "1.12.0"
+    version = "1.12.3"
     packaging = "jar"
 
 
@@ -146,13 +146,13 @@ _CLOJURE_LOCKFILE = dedent(
     [[entries.directDependencies]]
     group = "org.clojure"
     artifact = "clojure"
-    version = "1.12.0"
+    version = "1.12.3"
     packaging = "jar"
 
     [[entries.dependencies]]
     group = "org.clojure"
     artifact = "clojure"
-    version = "1.12.0"
+    version = "1.12.3"
     packaging = "jar"
 
 
@@ -178,7 +178,7 @@ def test_repl_request_includes_clojure_main(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -235,7 +235,7 @@ def test_repl_request_includes_source_files(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -293,7 +293,7 @@ def test_repl_request_includes_dependencies(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -350,7 +350,7 @@ def test_repl_request_with_test_sources(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -427,7 +427,7 @@ def test_repl_request_with_multiple_targets(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -507,7 +507,7 @@ def test_repl_uses_workspace_for_live_reloading(rule_runner: RuleRunner) -> None
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -564,7 +564,7 @@ def test_repl_argv_includes_jdk_paths(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -627,7 +627,7 @@ def test_repl_environment_includes_chroot_prefix(rule_runner: RuleRunner) -> Non
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -682,7 +682,7 @@ def test_repl_classpath_includes_source_roots(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -766,7 +766,7 @@ def test_repl_load_resolve_sources_enabled_by_default(rule_runner: RuleRunner) -
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -863,7 +863,7 @@ def test_repl_load_resolve_sources_disabled_hermetic_mode(rule_runner: RuleRunne
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -960,14 +960,14 @@ def test_repl_load_resolve_sources_with_multiple_resolves(rule_runner: RuleRunne
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                     resolve="resolve-a",
                 )
                 jvm_artifact(
                     name="org.clojure_clojure_resolve_b",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                     resolve="resolve-b",
                 )
                 """
@@ -1047,7 +1047,7 @@ def test_repl_nrepl_load_resolve_sources(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
@@ -1099,7 +1099,7 @@ def test_repl_rebel_load_resolve_sources(rule_runner: RuleRunner) -> None:
                     name="org.clojure_clojure",
                     group="org.clojure",
                     artifact="clojure",
-                    version="1.12.0",
+                    version="1.12.3",
                 )
                 """
             ),
