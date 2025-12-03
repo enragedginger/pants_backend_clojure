@@ -12,6 +12,7 @@ import json
 import logging
 from dataclasses import dataclass
 
+from pants.core.util_rules.config_files import ConfigFiles, ConfigFilesRequest
 from pants.core.util_rules.external_tool import DownloadedExternalTool, ExternalToolRequest
 from pants.engine.fs import Digest, MergeDigests, Snapshot
 from pants.engine.platform import Platform
@@ -83,10 +84,23 @@ async def analyze_clojure_namespaces(
         clj_kondo.get_request(platform),
     )
 
-    # Merge source files with clj-kondo binary
+    # Find config files if discovery is enabled
+    config_files = await Get(
+        ConfigFiles,
+        ConfigFilesRequest(
+            discovery=clj_kondo.config_discovery,
+            check_existence=[".clj-kondo/config.edn"],
+        ),
+    )
+
+    # Merge source files, clj-kondo binary, and config files
     input_digest = await Get(
         Digest,
-        MergeDigests([request.snapshot.digest, downloaded.digest]),
+        MergeDigests([
+            request.snapshot.digest,
+            downloaded.digest,
+            config_files.snapshot.digest,
+        ]),
     )
 
     # Run clj-kondo analysis in batch mode on all files
