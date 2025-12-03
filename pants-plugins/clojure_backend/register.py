@@ -4,8 +4,9 @@ from clojure_backend import (
     aot_compile,
     clojure_symbol_mapping,
     compile_clj,
-    provided_dependencies,
     dependency_inference,
+    namespace_analysis,
+    provided_dependencies,
 )
 from clojure_backend.goals import (
     check,
@@ -55,4 +56,5 @@ def rules():
         *check.rules(),
         *clojure_symbol_mapping.rules(),
         *generate_clojure_lockfile_metadata.rules(),
+        *namespace_analysis.rules(),
     ]

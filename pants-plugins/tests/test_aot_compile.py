@@ -25,7 +25,7 @@ from pants.jvm.resolve import coursier_fetch, jvm_tool
 from pants.jvm.target_types import JvmArtifactTarget, JvmResolveField
 from pants.testutil.rule_runner import RuleRunner
 
-from .clojure_test_fixtures import CLOJURE_LOCKFILE, CLOJURE_3RDPARTY_BUILD
+from tests.clojure_test_fixtures import CLOJURE_LOCKFILE, CLOJURE_3RDPARTY_BUILD
 
 
 @pytest.fixture
