@@ -13,7 +13,6 @@ from clojure_backend.namespace_analysis import (
 from clojure_backend.namespace_analysis import rules as namespace_analysis_rules
 from clojure_backend.target_types import ClojureSourceTarget
 from pants.core.util_rules import config_files, external_tool, source_files
-from pants.engine.fs import Snapshot
 from pants.engine.rules import QueryRule
 from pants.testutil.rule_runner import RuleRunner
 
@@ -351,3 +350,96 @@ def test_deduplicated_requires(rule_runner: RuleRunner) -> None:
     requires = analysis.requires.get("example.clj", ())
     # Should only appear once, not twice
     assert requires.count("clojure.string") == 1
+
+
+def test_comment_form_requires_included_without_config(rule_runner: RuleRunner) -> None:
+    """Test baseline: without :skip-comments config, requires in comment forms are included."""
+    source_content = dedent(
+        """\
+        (ns example.core
+          (:require [clojure.string :as str]))
+
+        (defn process []
+          (str/upper-case "hello"))
+
+        (comment
+          (require '[clojure.set :as set])
+          (set/union #{1} #{2}))
+        """
+    )
+
+    rule_runner.set_options(
+        ["--backend-packages=clojure_backend"],
+        env_inherit={"PATH", "PYENV_ROOT", "HOME"},
+    )
+    rule_runner.write_files(
+        {
+            "example.clj": source_content,
+            # No .clj-kondo/config.edn - using defaults
+        }
+    )
+
+    snapshot = rule_runner.make_snapshot({"example.clj": source_content})
+
+    analysis = rule_runner.request(
+        ClojureNamespaceAnalysis,
+        [ClojureNamespaceAnalysisRequest(snapshot)],
+    )
+
+    # Without skip-comments config, clojure.set from comment form should be included
+    requires = analysis.requires.get("example.clj", ())
+    assert "clojure.string" in requires
+    assert "clojure.set" in requires, (
+        "clojure.set should be included when :skip-comments is not set - "
+        "this is the baseline behavior"
+    )
+
+
+def test_config_file_skip_comments_is_respected(rule_runner: RuleRunner) -> None:
+    """Test that .clj-kondo/config.edn with :skip-comments is respected.
+
+    When :skip-comments is true, requires inside (comment ...) forms should not
+    appear in analysis results.
+
+    Since Pants ignores dotfiles by default and this is difficult to override in tests,
+    we test by including the config file in the snapshot itself. This verifies that
+    when the config file IS present in the sandbox, clj-kondo respects it.
+    """
+    source_content = dedent(
+        """\
+        (ns example.core
+          (:require [clojure.string :as str]))
+
+        (defn process []
+          (str/upper-case "hello"))
+
+        (comment
+          (require '[clojure.set :as set])
+          (set/union #{1} #{2}))
+        """
+    )
+
+    rule_runner.set_options(
+        ["--backend-packages=clojure_backend"],
+        env_inherit={"PATH", "PYENV_ROOT", "HOME"},
+    )
+
+    # Create snapshot including both source file AND config file
+    # This simulates what happens when ConfigFilesRequest successfully finds the config
+    snapshot = rule_runner.make_snapshot({
+        ".clj-kondo/config.edn": "{:skip-comments true}",
+        "example.clj": source_content,
+    })
+
+    analysis = rule_runner.request(
+        ClojureNamespaceAnalysis,
+        [ClojureNamespaceAnalysisRequest(snapshot)],
+    )
+
+    # With skip-comments config, clojure.set from comment form should NOT be included
+    requires = analysis.requires.get("example.clj", ())
+    assert "clojure.string" in requires
+    assert "clojure.set" not in requires, (
+        "clojure.set should be excluded when :skip-comments is true - "
+        "this suggests clj-kondo is not respecting the config file in the sandbox"
+    )
