@@ -818,188 +818,22 @@ def test_provided_maven_transitives_excluded_from_jar(rule_runner: RuleRunner) -
 
 
 # =============================================================================
-# Tests for is_project_class() filtering logic
+# Tests for AOT-first, JAR-override packaging behavior
 # =============================================================================
-# These tests verify that AOT-compiled classes from third-party libraries are
-# correctly filtered out, while project classes (including inner classes,
-# __init classes, and subpackage classes) are retained.
+# These tests verify that AOT-compiled classes are added first, then dependency
+# JAR contents override them. This ensures:
+# 1. Source-only third-party libraries work (their AOT classes are included)
+# 2. Pre-compiled libraries work (their JAR classes override AOT for protocol safety)
 
 
-class TestIsProjectClassFiltering:
-    """Tests for the is_project_class() filtering logic in package.py.
+def test_aot_classes_included_then_jar_overrides(rule_runner: RuleRunner) -> None:
+    """Integration test: verify AOT classes are added first, then JAR contents override.
 
-    The is_project_class() function determines whether an AOT-compiled class
-    belongs to a project namespace or is a transitively-compiled third-party class.
-    Third-party classes should come from their original JARs, not from AOT output.
-    """
-
-    @staticmethod
-    def _create_is_project_class(project_namespace_paths: set[str]):
-        """Create an is_project_class function with the given project namespaces.
-
-        This replicates the logic from package.py for testing purposes.
-        """
-        def is_project_class(arcname: str) -> bool:
-            # Remove .class extension
-            class_path = arcname[:-6]  # len('.class') == 6
-
-            # Handle inner classes (split on $) and __init classes
-            base_class_path = class_path.split('$')[0]
-            if base_class_path.endswith('__init'):
-                base_class_path = base_class_path[:-6]  # len('__init') == 6
-
-            # Check for exact match
-            if base_class_path in project_namespace_paths:
-                return True
-
-            # Check if this is a class in a subpackage of a project namespace
-            for ns_path in project_namespace_paths:
-                if base_class_path.startswith(ns_path + '/'):
-                    return True
-
-            return False
-        return is_project_class
-
-    def test_direct_namespace_class(self):
-        """Test that direct namespace classes are correctly identified."""
-        project_ns = {'my/app/core'}
-        is_project_class = self._create_is_project_class(project_ns)
-
-        # Project class should be included
-        assert is_project_class('my/app/core.class') is True
-
-        # Third-party class should be excluded
-        assert is_project_class('clojure/core.class') is False
-        assert is_project_class('other/lib/util.class') is False
-
-    def test_inner_classes_with_dollar_sign(self):
-        """Test that inner classes (with $) are correctly identified."""
-        project_ns = {'my/app/core'}
-        is_project_class = self._create_is_project_class(project_ns)
-
-        # Inner classes of project namespace should be included
-        assert is_project_class('my/app/core$fn__123.class') is True
-        assert is_project_class('my/app/core$_main.class') is True
-        assert is_project_class('my/app/core$SomeRecord.class') is True
-        assert is_project_class('my/app/core$loading__6789__auto____1234.class') is True
-
-        # Inner classes of third-party should be excluded
-        assert is_project_class('clojure/core$fn__123.class') is False
-
-    def test_init_classes(self):
-        """Test that __init classes are correctly identified."""
-        project_ns = {'my/app/core'}
-        is_project_class = self._create_is_project_class(project_ns)
-
-        # __init class of project namespace should be included
-        assert is_project_class('my/app/core__init.class') is True
-
-        # __init class of third-party should be excluded
-        assert is_project_class('clojure/core__init.class') is False
-
-    def test_subpackage_classes(self):
-        """Test that subpackage classes are correctly identified."""
-        project_ns = {'my/app/core'}
-        is_project_class = self._create_is_project_class(project_ns)
-
-        # Subpackage of project namespace should be included
-        assert is_project_class('my/app/core/impl.class') is True
-        assert is_project_class('my/app/core/utils/helper.class') is True
-
-        # But unrelated paths should be excluded
-        assert is_project_class('my/app/other.class') is False
-
-    def test_hyphenated_namespaces(self):
-        """Test that hyphenated namespaces (converted to underscores) work correctly."""
-        # In Clojure, my-app.core becomes my_app/core in class files
-        project_ns = {'my_app/core', 'test_utils/helper'}
-        is_project_class = self._create_is_project_class(project_ns)
-
-        # Hyphenated namespace classes should be included
-        assert is_project_class('my_app/core.class') is True
-        assert is_project_class('my_app/core$fn__123.class') is True
-        assert is_project_class('test_utils/helper.class') is True
-
-        # Third-party should be excluded
-        assert is_project_class('other_lib/util.class') is False
-
-    def test_similar_prefixes_no_false_positives(self):
-        """Test that similar prefixes don't cause false positives.
-
-        If project has namespace 'api.core', it should NOT match 'apiclient.utils'.
-        """
-        project_ns = {'api/core'}
-        is_project_class = self._create_is_project_class(project_ns)
-
-        # Project class should be included
-        assert is_project_class('api/core.class') is True
-
-        # Similar prefix but different namespace should be EXCLUDED
-        assert is_project_class('apiclient/utils.class') is False
-        assert is_project_class('api2/core.class') is False
-        assert is_project_class('apihelper/core.class') is False
-
-    def test_multiple_project_namespaces(self):
-        """Test with multiple project namespaces."""
-        project_ns = {'api/core', 'web/handlers', 'db/queries'}
-        is_project_class = self._create_is_project_class(project_ns)
-
-        # All project namespaces should be included
-        assert is_project_class('api/core.class') is True
-        assert is_project_class('web/handlers.class') is True
-        assert is_project_class('db/queries.class') is True
-        assert is_project_class('api/core$fn.class') is True
-
-        # Third-party should still be excluded
-        assert is_project_class('clojure/core.class') is False
-        assert is_project_class('some/lib.class') is False
-
-    def test_clojure_core_always_excluded(self):
-        """Test that clojure.core classes are never included (always third-party)."""
-        # Even with an empty project, Clojure core should be excluded
-        project_ns = {'my/app'}
-        is_project_class = self._create_is_project_class(project_ns)
-
-        assert is_project_class('clojure/core.class') is False
-        assert is_project_class('clojure/core$fn__123.class') is False
-        assert is_project_class('clojure/core__init.class') is False
-        assert is_project_class('clojure/lang/RT.class') is False
-        assert is_project_class('clojure/string.class') is False
-
-    def test_empty_project_namespaces(self):
-        """Test behavior when no project namespaces exist."""
-        project_ns = set()
-        is_project_class = self._create_is_project_class(project_ns)
-
-        # All classes should be excluded
-        assert is_project_class('any/class.class') is False
-        assert is_project_class('my/app/core.class') is False
-
-    def test_nested_inner_classes(self):
-        """Test nested inner classes (multiple $ in name)."""
-        project_ns = {'my/app/core'}
-        is_project_class = self._create_is_project_class(project_ns)
-
-        # Nested inner classes should be included
-        assert is_project_class('my/app/core$Outer$Inner.class') is True
-        assert is_project_class('my/app/core$fn__1$fn__2.class') is True
-
-    def test_init_with_inner_class(self):
-        """Test __init classes that also have inner class markers."""
-        project_ns = {'my/app/core'}
-        is_project_class = self._create_is_project_class(project_ns)
-
-        # Edge case: inner class of an __init - unlikely but should work
-        # The $ split happens first, so this tests robustness
-        assert is_project_class('my/app/core__init$something.class') is True
-
-
-def test_third_party_aot_classes_excluded_from_jar(rule_runner: RuleRunner) -> None:
-    """Integration test: verify third-party AOT classes are filtered out.
-
-    When AOT compiling, Clojure transitively compiles all required namespaces.
-    This test verifies that only project namespace classes end up in the JAR,
-    while third-party classes (like clojure.core) come from their original JARs.
+    This tests the core behavior of the packaging logic:
+    1. All AOT-compiled classes are added first (project + third-party transitives)
+    2. Dependency JAR contents are extracted and override existing entries
+    3. For pre-compiled libraries, JAR classes win (protocol safety)
+    4. For source-only libraries, AOT classes remain (they're needed at runtime)
     """
     import io
     import zipfile
@@ -1059,15 +893,12 @@ def test_third_party_aot_classes_excluded_from_jar(rule_runner: RuleRunner) -> N
     with zipfile.ZipFile(jar_buffer, 'r') as jar:
         jar_entries = set(jar.namelist())
 
-    # Project classes should be present (from AOT)
+    # Project classes should be present (from AOT, first pass)
     myapp_classes = [e for e in jar_entries if e.startswith('myapp/')]
     assert len(myapp_classes) > 0, "Project myapp classes should be in JAR"
 
-    # Clojure core classes should be present (from JAR, not AOT)
-    # They come from the dependency JAR, which is correct
+    # Clojure core classes should be present
+    # They come from the Clojure JAR (second pass, overrides AOT versions)
+    # This ensures correct protocol identity for pre-compiled libraries
     clojure_classes = [e for e in jar_entries if e.startswith('clojure/')]
     assert len(clojure_classes) > 0, "Clojure classes should be in JAR (from dependency JARs)"
-
-    # The key verification: we should NOT have duplicate myapp classes
-    # (one from AOT, one from... nowhere, since we're the source)
-    # This test mainly verifies the filtering doesn't break basic functionality

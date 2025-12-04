@@ -17,21 +17,15 @@ from pants.core.goals.package import (
 )
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.engine.addresses import Addresses
-from pants.engine.fs import CreateDigest, Digest, DigestContents, FileContent, MergeDigests, Snapshot
+from pants.engine.fs import CreateDigest, Digest, DigestContents, FileContent, MergeDigests
 from pants.engine.internals.selectors import Get, MultiGet
 from pants.engine.rules import collect_rules, rule
 from pants.engine.target import (
-    Target,
     TransitiveTargets,
     TransitiveTargetsRequest,
 )
 from pants.engine.unions import UnionRule
 from pants.jvm.classpath import Classpath
-from pants.jvm.goals import lockfile
-from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest, JvmProcess
-from pants.jvm.package.deploy_jar import (
-    DeployJarFieldSet,
-)
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmJdkField, JvmResolveField
 from pants.util.frozendict import FrozenDict
@@ -52,7 +46,6 @@ from clojure_backend.provided_dependencies import (
 from clojure_backend.target_types import (
     ClojureAOTNamespacesField,
     ClojureProvidedDependenciesField,
-    ClojureDeployJarTarget,
     ClojureMainNamespaceField,
     ClojureSourceField,
     ClojureTestSourceField,
@@ -208,9 +201,6 @@ async def package_clojure_deploy_jar(
         # Default: namespace is the class name
         main_class_name = main_namespace
 
-    # Get JDK request from field
-    jdk_request = JdkRequest.from_field(field_set.jdk)
-
     # Get provided dependencies to exclude from the JAR
     # Pass the resolve name so Maven transitives can be looked up in the lockfile
     resolve_name = field_set.resolve.normalized_value(jvm)
@@ -228,11 +218,10 @@ async def package_clojure_deploy_jar(
         if addr not in provided_deps.addresses
     )
 
-    # Get JDK environment, runtime classpath, and compiled classes
+    # Get runtime classpath and compiled classes
     # Note: AOT compilation uses ALL addresses (including provided)
     #       JAR packaging uses RUNTIME addresses (excluding provided)
-    jdk_env, runtime_classpath, compiled_classes = await MultiGet(
-        Get(JdkEnvironment, JdkRequest, jdk_request),
+    runtime_classpath, compiled_classes = await MultiGet(
         Get(Classpath, Addresses, runtime_source_addresses),
         Get(
             CompiledClojureClasses,
@@ -262,6 +251,7 @@ async def package_clojure_deploy_jar(
 
     # Get all source files and analyze namespaces
     provided_namespaces: set[str] = set()
+    provided_namespace_paths: set[str] = set()
     if provided_source_fields:
         provided_source_files = await Get(
             SourceFiles,
@@ -274,54 +264,22 @@ async def package_clojure_deploy_jar(
                 ClojureNamespaceAnalysisRequest(provided_source_files.snapshot),
             )
             provided_namespaces = set(provided_analysis.namespaces.values())
+            # Convert namespaces to class paths for filtering AOT classes
+            for namespace in provided_namespaces:
+                namespace_path = namespace.replace('.', '/').replace('-', '_')
+                provided_namespace_paths.add(namespace_path)
 
-    # Build set of project namespace paths for filtering AOT classes
-    # These are all the namespaces from our analyzed source files (excluding provided)
-    # Third-party classes from transitive AOT compilation should come from original JARs
-    project_namespace_paths = set()
-    for namespace in namespace_analysis.namespaces.values():
-        if namespace not in provided_namespaces:
-            # Convert namespace to path (e.g., "my.app.core" -> "my/app/core")
-            namespace_path = namespace.replace('.', '/').replace('-', '_')
-            project_namespace_paths.add(namespace_path)
-
-    # Warn if no project namespaces were detected - this may indicate a configuration issue
-    if not project_namespace_paths:
-        logger.warning(
-            f"No project namespaces detected for {field_set.address}. "
-            "All AOT-compiled classes will be excluded from the JAR. "
-            "This may indicate a configuration issue - ensure your clojure_source targets "
-            "are properly configured as dependencies."
-        )
-
-    def is_project_class(arcname: str) -> bool:
-        """Check if a class file belongs to a project namespace.
-
-        Handles:
-        - Direct namespace classes: my/app/core.class
-        - Inner classes: my/app/core$fn__123.class
-        - Method implementation: my/app/core$_main.class
-        - Init classes: my/app/core__init.class
-        """
+    def is_provided_class(arcname: str) -> bool:
+        """Check if a class file belongs to a provided dependency namespace."""
+        if not provided_namespace_paths:
+            return False
         # Remove .class extension
         class_path = arcname[:-6]  # len('.class') == 6
-
         # Handle inner classes (split on $) and __init classes
         base_class_path = class_path.split('$')[0]
         if base_class_path.endswith('__init'):
             base_class_path = base_class_path[:-6]  # len('__init') == 6
-
-        # Check for exact match
-        if base_class_path in project_namespace_paths:
-            return True
-
-        # Check if this is a class in a subpackage of a project namespace
-        # e.g., my/app/core/impl.class is under my/app/core
-        for ns_path in project_namespace_paths:
-            if base_class_path.startswith(ns_path + '/'):
-                return True
-
-        return False
+        return base_class_path in provided_namespace_paths
 
     # Create JAR manifest with main class
     manifest_content = f"""\
@@ -342,8 +300,9 @@ Created-By: Pants Build System
         # Write manifest first (uncompressed as per JAR spec)
         jar.writestr('META-INF/MANIFEST.MF', manifest_content, compress_type=zipfile.ZIP_STORED)
 
-        # Track what we've added to avoid duplicates
+        # Track what we've added for logging purposes
         added_entries = {'META-INF/MANIFEST.MF'}
+        aot_entries = set()
 
         # Build set of artifact prefixes to exclude based on coordinates
         # Pants/Coursier JAR filenames follow: {group}_{artifact}_{version}.jar pattern
@@ -352,7 +311,24 @@ Created-By: Pants Build System
         for group, artifact in provided_deps.coordinates:
             excluded_artifact_prefixes.add(f"{group}_{artifact}_")
 
-        # Extract and add all dependency JARs (except provided ones)
+        # Step 1: Add ALL AOT-compiled classes first (except provided dependencies)
+        # These provide a baseline - source-only third-party libraries need these
+        # Provided Clojure source dependencies are excluded (they're compile-only)
+        for file_content in digest_contents:
+            if file_content.path.startswith('classes/') and file_content.path.endswith('.class'):
+                arcname = file_content.path[8:]  # len('classes/') == 8
+                # Skip classes belonging to provided Clojure source dependencies
+                if is_provided_class(arcname):
+                    continue
+                jar.writestr(arcname, file_content.content)
+                added_entries.add(arcname)
+                aot_entries.add(arcname)
+
+        # Step 2: Extract dependency JARs
+        # JAR contents OVERRIDE AOT classes - this is intentional for protocol safety
+        # Pre-compiled library classes have correct protocol relationships
+        # Note: ZIP format allows duplicate entries; the LAST entry wins during extraction
+        overridden_count = 0
         for file_content in digest_contents:
             if file_content.path.endswith('.jar'):
                 # Check if this JAR should be excluded based on coordinates
@@ -371,47 +347,27 @@ Created-By: Pants Build System
                     jar_bytes = io.BytesIO(file_content.content)
                     with zipfile.ZipFile(jar_bytes, 'r') as dep_jar:
                         for item in dep_jar.namelist():
-                            # Skip META-INF files from dependencies and duplicates
-                            if not item.startswith('META-INF/') and item not in added_entries:
+                            # Skip META-INF files from dependencies
+                            if not item.startswith('META-INF/'):
                                 try:
                                     data = dep_jar.read(item)
+                                    if item in aot_entries:
+                                        # JAR class overrides AOT class (protocol safety)
+                                        overridden_count += 1
+                                        logger.debug(f"JAR class overrides AOT: {item}")
                                     jar.writestr(item, data)
                                     added_entries.add(item)
                                 except Exception:
-                                    # Skip bad entries or duplicates
+                                    # Skip bad entries
                                     pass
                 except Exception:
                     # Skip invalid JAR files
                     pass
 
-        # Add compiled classes (they're in the classes/ directory)
-        # Only include classes from project namespaces, not transitively compiled third-party
-        # This ensures third-party library classes come from their original JARs,
-        # which is critical for protocol extensions to work correctly.
-        excluded_third_party_count = 0
-        for file_content in digest_contents:
-            if file_content.path.startswith('classes/') and file_content.path.endswith('.class'):
-                # Remove 'classes/' prefix to get the archive name
-                arcname = file_content.path[8:]  # len('classes/') == 8
-
-                # Only include classes from project namespaces
-                # Third-party classes should come from their original JARs
-                if not is_project_class(arcname):
-                    logger.debug(
-                        f"Excluding transitively AOT-compiled third-party class: {arcname}"
-                    )
-                    excluded_third_party_count += 1
-                    continue
-
-                # Only add if not already in JAR (from dependency JARs)
-                if arcname not in added_entries:
-                    jar.writestr(arcname, file_content.content)
-                    added_entries.add(arcname)
-
-        if excluded_third_party_count > 0:
+        if overridden_count > 0:
             logger.debug(
-                f"Excluded {excluded_third_party_count} transitively AOT-compiled third-party "
-                f"classes from {field_set.address}. These classes will come from their original JARs."
+                f"Dependency JARs overrode {overridden_count} AOT-compiled classes for {field_set.address}. "
+                "This ensures pre-compiled library classes are used for protocol safety."
             )
 
     # Create the output digest with the JAR file

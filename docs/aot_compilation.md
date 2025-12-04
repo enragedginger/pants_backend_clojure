@@ -10,7 +10,7 @@ This transitive compilation is a well-known behavior in the Clojure ecosystem, a
 
 ## How It Works
 
-### The Problem
+### The Challenge
 
 When AOT-compiling `my.app.core`, Clojure will also compile:
 - `clojure.core`
@@ -18,7 +18,7 @@ When AOT-compiling `my.app.core`, Clojure will also compile:
 - Any third-party library namespaces your code requires
 - All transitive dependencies
 
-If these third-party `.class` files were included in your uberjar, they could override the original classes from the library JARs. This can cause serious problems, especially with protocol extensions.
+If these third-party `.class` files were included in your uberjar WITHOUT the correct handling, they could cause problems with protocol extensions (class identity mismatches).
 
 ### Protocol Extension Issues
 
@@ -34,43 +34,39 @@ java.lang.IllegalArgumentException: No implementation of method: :spec of protoc
 #'rpl.schema.core/Schema found for class: rpl.rama.util.schema.Volatile
 ```
 
-### Our Solution
+### Our Solution: AOT First, JAR Override
 
-The `clojure_deploy_jar` packaging rule filters AOT-compiled classes:
+The `clojure_deploy_jar` packaging rule uses a two-pass approach:
 
-1. **Project namespaces are included**: Classes from your project's Clojure source files are included in the JAR
-2. **Third-party classes are excluded**: Transitively compiled third-party classes are filtered out
-3. **Original JARs are used**: Third-party library classes come from their original dependency JARs
+1. **First pass: Add all AOT-compiled classes**
+   - All classes from AOT compilation are added to the JAR (project + third-party transitives)
+   - This ensures source-only libraries (libraries that ship without pre-compiled .class files) work correctly
 
-This approach mirrors what `tools.build` does with its `:filter-nses` parameter and what Leiningen does with `:clean-non-project-classes`.
+2. **Second pass: Extract dependency JARs, overriding existing entries**
+   - Dependency JAR contents are extracted into the uberjar
+   - When a JAR contains a class that was already added from AOT, the JAR version wins
+   - This ensures pre-compiled libraries use their original classes (protocol safety)
 
-## Class File Filtering
+### Why This Works
 
-The plugin identifies project classes by:
+| Scenario | AOT Classes | JAR Contents | Result |
+|----------|-------------|--------------|--------|
+| Pre-compiled library | `lib/Protocol.class` (wrong identity) | `lib/Protocol.class` (correct) | JAR overwrites → CORRECT |
+| Source-only library | `lib/SourceOnly.class` | `lib/source_only.clj` (no class) | AOT class kept → CORRECT |
+| Partial library | `lib/A.class`, `lib/B.class` | `lib/A.class`, `lib/b.clj` | JAR overwrites A, AOT B kept → CORRECT |
 
-1. Analyzing all Clojure source files in your project to extract namespaces
-2. Converting namespace names to class file paths (e.g., `my.app.core` → `my/app/core`)
-3. Matching AOT-compiled class files against these paths
+This approach aligns with the standard behavior in the Clojure ecosystem where "last write wins" during JAR packaging.
 
-### Handled Class Types
+## Source-Only Libraries
 
-The filtering correctly handles all Clojure-generated class file patterns:
+Many Clojure libraries are distributed as source-only (containing only `.clj` files, no pre-compiled `.class` files). The AOT-first approach ensures these libraries work correctly:
 
-| Pattern | Example | Description |
-|---------|---------|-------------|
-| Direct namespace | `my/app/core.class` | Main namespace class |
-| Inner classes | `my/app/core$fn__123.class` | Anonymous functions |
-| Method implementations | `my/app/core$_main.class` | gen-class methods |
-| Init classes | `my/app/core__init.class` | Namespace initialization |
-| Records | `my/app/core$MyRecord.class` | defrecord classes |
-| Subpackages | `my/app/core/impl.class` | Nested namespaces |
+1. During AOT compilation, these libraries are transitively compiled
+2. Their `.class` files are added to the uberjar in the first pass
+3. When extracting their JARs, only source files are present (no conflict)
+4. At runtime, the JVM uses the compiled `.class` files
 
-### Hyphenated Namespaces
-
-Clojure namespaces with hyphens are converted to underscores in class files:
-- `my-app.core` → `my_app/core.class`
-
-The plugin handles this conversion automatically.
+Without the AOT-first approach, source-only libraries would fail at runtime with `ClassNotFoundException` because their required classes wouldn't be present.
 
 ## Troubleshooting
 
@@ -82,7 +78,11 @@ java.lang.IllegalArgumentException: No implementation of method: :foo of protoco
 #'some.lib/Protocol found for class: some.lib.SomeRecord
 ```
 
-This typically indicates a protocol/class identity mismatch. The fix ensures third-party classes come from their original JARs, which should resolve this issue.
+This typically indicates a protocol/class identity mismatch. The AOT-first, JAR-override approach should resolve this issue. If you still see this error:
+
+1. Ensure you're using the latest version of pants-backend-clojure
+2. Check if the library has any special packaging requirements
+3. Try marking the problematic library as `provided` if it should be supplied at runtime
 
 ### Verifying JAR Contents
 
@@ -92,15 +92,15 @@ To inspect what classes are in your JAR:
 # List all classes
 jar tf target/my-app.jar | grep '\.class$'
 
-# Check for specific third-party classes (should NOT be present from AOT)
+# Check for specific third-party classes
 jar tf target/my-app.jar | grep 'clojure/core'
 ```
 
-Third-party classes like `clojure/core.class` should be present (from the Clojure JAR), but you should NOT see duplicate entries from AOT compilation.
+Third-party classes like `clojure/core.class` should be present (from the Clojure JAR, which overwrites the AOT version).
 
 ### Debug Logging
 
-To see which classes are being filtered, run Pants with debug logging:
+To see which AOT classes are being overridden by JAR contents, run Pants with debug logging:
 
 ```bash
 pants --level=debug package //path/to:my_deploy_jar
@@ -108,38 +108,29 @@ pants --level=debug package //path/to:my_deploy_jar
 
 You'll see messages like:
 ```
-Excluding transitively AOT-compiled third-party class: clojure/core$fn__123.class
-Excluded 1234 transitively AOT-compiled third-party classes from //path/to:my_deploy_jar
+JAR class overrides AOT: clojure/core$fn__123.class
+Dependency JARs overrode 1234 AOT-compiled classes for //path/to:my_deploy_jar
 ```
-
-### No Project Namespaces Warning
-
-If you see:
-```
-No project namespaces detected for //path/to:my_deploy_jar. All AOT-compiled classes
-will be excluded from the JAR.
-```
-
-This indicates a configuration issue. Ensure:
-1. Your `clojure_source` targets are properly defined
-2. They are listed as dependencies of the `clojure_deploy_jar`
-3. The source files contain valid `(ns ...)` declarations
 
 ## Provided Dependencies
 
-When using `provided` dependencies (dependencies available at runtime but not bundled in the JAR), those namespaces are also excluded from the project namespace set. This prevents AOT-compiled classes for provided dependencies from being included.
+When using `provided` dependencies (dependencies available at runtime but not bundled in the JAR):
+
+1. AOT-compiled classes for provided namespaces are excluded from the JAR
+2. Provided library JARs are not extracted into the uberjar
 
 See [Provided Dependencies](./provided_dependencies.md) for more information.
 
 ## Comparison with Other Build Tools
 
-| Tool | Filtering Mechanism |
-|------|---------------------|
-| **pants-backend-clojure** | Filters AOT output by project namespace paths |
-| **tools.build** | `:filter-nses` parameter on `compile-clj` |
-| **Leiningen** | `:clean-non-project-classes` option |
-| **depstar** | `:exclude` with regex patterns |
-| **Boot** | Manual namespace specification |
+| Tool | Approach |
+|------|----------|
+| **pants-backend-clojure** | AOT first, JAR override (last write wins) |
+| **tools.build** | Uses `:filter-nses` to exclude third-party AOT |
+| **Leiningen** | Uses `:clean-non-project-classes` option |
+| **depstar** | JAR contents merged, last wins |
+
+Our approach aligns with the ecosystem standard where dependency JARs are processed after AOT classes, ensuring pre-compiled library classes are used.
 
 ## References
 
