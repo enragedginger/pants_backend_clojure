@@ -717,6 +717,95 @@ def test_provided_jvm_artifact_excluded_from_jar(rule_runner: RuleRunner) -> Non
         f"Provided jvm_artifact jsr305 should NOT be in JAR, but found: {jsr305_entries}"
 
 
+def test_transitive_maven_deps_included_in_jar(rule_runner: RuleRunner) -> None:
+    """Test that transitive Maven dependencies ARE included in the final JAR.
+
+    This is a critical test to verify that the full transitive closure of Maven
+    dependencies is bundled into the uberjar. When app depends on org.clojure:clojure,
+    its transitive dependencies (spec.alpha, core.specs.alpha) should be included.
+
+    This test is the positive counterpart to test_provided_maven_transitives_excluded_from_jar.
+    """
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/app/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="app.core",
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/app/core.clj": dedent(
+                """\
+                (ns app.core
+                  (:require [clojure.spec.alpha :as s])
+                  (:gen-class))
+
+                (defn -main [& args]
+                  (println "Using spec:" (s/valid? int? 42)))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/app", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    # Package the JAR
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+    # Read the JAR and check its contents
+    jar_path = result.artifacts[0].relpath
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None, f"Could not find JAR file {jar_path} in digest"
+
+    # Parse the JAR and check what classes are included
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        jar_entries = set(jar.namelist())
+
+    # The main app classes should be present
+    assert any('app/core' in entry for entry in jar_entries), \
+        "Main app.core classes should be in JAR"
+
+    # Direct dependency: org.clojure:clojure classes should be present
+    clojure_core_entries = [entry for entry in jar_entries if entry.startswith('clojure/core')]
+    assert len(clojure_core_entries) > 0, \
+        "Direct dependency org.clojure:clojure classes should be in JAR"
+
+    # CRITICAL: Transitive dependencies should ALSO be present!
+    # spec.alpha is a transitive dep of clojure - contains clojure/spec/alpha classes
+    spec_alpha_entries = [entry for entry in jar_entries if 'clojure/spec/alpha' in entry]
+    assert len(spec_alpha_entries) > 0, \
+        "Transitive dep spec.alpha classes should be in JAR (transitive of org.clojure:clojure)"
+
+    # core.specs.alpha is also a transitive dep - contains clojure/core/specs/alpha classes
+    core_specs_entries = [entry for entry in jar_entries if 'clojure/core/specs/alpha' in entry]
+    assert len(core_specs_entries) > 0, \
+        "Transitive dep core.specs.alpha classes should be in JAR (transitive of org.clojure:clojure)"
+
+
 def test_provided_maven_transitives_excluded_from_jar(rule_runner: RuleRunner) -> None:
     """Test that Maven transitive dependencies of provided artifacts are excluded from JAR.
 
@@ -824,6 +913,16 @@ def test_provided_maven_transitives_excluded_from_jar(rule_runner: RuleRunner) -
 # JAR contents override them. This ensures:
 # 1. Source-only third-party libraries work (their AOT classes are included)
 # 2. Pre-compiled libraries work (their JAR classes override AOT for protocol safety)
+#
+# NOTE ON TEST COVERAGE:
+# We cannot easily test with real source-only Maven libraries because:
+# 1. All Maven artifacts in our test lockfiles have pre-compiled classes
+# 2. Creating synthetic source-only JARs in tests is complex
+#
+# Instead, we use first-party clojure_source targets as proxies for source-only
+# libraries - they behave identically (no JAR with pre-compiled classes).
+# The test_transitive_first_party_classes_included test specifically verifies
+# that classes for transitive dependencies without JARs are included.
 
 
 def test_aot_classes_included_then_jar_overrides(rule_runner: RuleRunner) -> None:
@@ -902,3 +1001,235 @@ def test_aot_classes_included_then_jar_overrides(rule_runner: RuleRunner) -> Non
     # This ensures correct protocol identity for pre-compiled libraries
     clojure_classes = [e for e in jar_entries if e.startswith('clojure/')]
     assert len(clojure_classes) > 0, "Clojure classes should be in JAR (from dependency JARs)"
+
+
+def test_transitive_first_party_classes_included(rule_runner: RuleRunner) -> None:
+    """Verify that transitive first-party dependencies have their AOT classes included.
+
+    This test is critical for catching regressions like the source-only library bug.
+    First-party clojure_source targets behave like source-only third-party libraries:
+    they have no JAR with pre-compiled classes, so their AOT classes MUST be included.
+
+    The previous bug filtered out ALL non-project-namespace AOT classes, which would
+    break this scenario. This test ensures transitive first-party deps work correctly.
+    """
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            # A "library" namespace that will be transitively compiled
+            "src/mylib/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="utils",
+                    source="utils.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+                """
+            ),
+            "src/mylib/utils.clj": dedent(
+                """\
+                (ns mylib.utils)
+
+                (defn format-greeting [name]
+                  (str "Hello, " name "!"))
+                """
+            ),
+            # The main app that depends on the library
+            "src/myapp/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["//src/mylib:utils", "3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="myapp.core",
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/myapp/core.clj": dedent(
+                """\
+                (ns myapp.core
+                  (:require [mylib.utils :as utils])
+                  (:gen-class))
+
+                (defn -main [& args]
+                  (println (utils/format-greeting "World")))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/myapp", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    # Package the JAR
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+    # Read the JAR and check its contents
+    jar_path = result.artifacts[0].relpath
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None
+
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        jar_entries = set(jar.namelist())
+
+    # Main app classes should be present
+    myapp_classes = [e for e in jar_entries if e.startswith('myapp/')]
+    assert len(myapp_classes) > 0, "Main app myapp classes should be in JAR"
+
+    # CRITICAL: The transitive library classes MUST be present
+    # These come from AOT compilation only (no JAR to extract from)
+    # This is the scenario that broke with source-only third-party libraries
+    mylib_classes = [e for e in jar_entries if e.startswith('mylib/')]
+    assert len(mylib_classes) > 0, (
+        "Transitive first-party library mylib classes should be in JAR. "
+        "This simulates source-only third-party libraries which have no pre-compiled JAR classes."
+    )
+
+    # Verify specific class patterns exist for the library
+    assert any('mylib/utils' in e and e.endswith('.class') for e in mylib_classes), \
+        "mylib.utils namespace classes should be present"
+
+
+def test_deeply_nested_transitive_deps_included(rule_runner: RuleRunner) -> None:
+    """Verify that deeply nested transitive dependencies have their AOT classes included.
+
+    Tests a chain: app -> lib-a -> lib-b -> lib-c
+    All intermediate library classes must be in the final JAR.
+    """
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            # Deepest dependency
+            "src/lib_c/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+                """
+            ),
+            "src/lib_c/core.clj": dedent(
+                """\
+                (ns lib-c.core)
+                (def value-c "from-lib-c")
+                """
+            ),
+            # Middle dependency
+            "src/lib_b/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["//src/lib_c:core", "3rdparty/jvm:org.clojure_clojure"],
+                )
+                """
+            ),
+            "src/lib_b/core.clj": dedent(
+                """\
+                (ns lib-b.core
+                  (:require [lib-c.core :as c]))
+                (def value-b (str "from-lib-b+" c/value-c))
+                """
+            ),
+            # Direct dependency
+            "src/lib_a/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["//src/lib_b:core", "3rdparty/jvm:org.clojure_clojure"],
+                )
+                """
+            ),
+            "src/lib_a/core.clj": dedent(
+                """\
+                (ns lib-a.core
+                  (:require [lib-b.core :as b]))
+                (def value-a (str "from-lib-a+" b/value-b))
+                """
+            ),
+            # Main app
+            "src/app/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["//src/lib_a:core", "3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="myapp",
+                    main="app.core",
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/app/core.clj": dedent(
+                """\
+                (ns app.core
+                  (:require [lib-a.core :as a])
+                  (:gen-class))
+
+                (defn -main [& args]
+                  (println a/value-a))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/app", target_name="myapp"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    # Package the JAR
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+    # Read the JAR and check its contents
+    jar_path = result.artifacts[0].relpath
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None
+
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        jar_entries = set(jar.namelist())
+
+    # All namespaces in the chain must have their classes present
+    app_classes = [e for e in jar_entries if e.startswith('app/')]
+    lib_a_classes = [e for e in jar_entries if e.startswith('lib_a/')]
+    lib_b_classes = [e for e in jar_entries if e.startswith('lib_b/')]
+    lib_c_classes = [e for e in jar_entries if e.startswith('lib_c/')]
+
+    assert len(app_classes) > 0, "app namespace classes should be in JAR"
+    assert len(lib_a_classes) > 0, "lib-a namespace classes should be in JAR (direct dep)"
+    assert len(lib_b_classes) > 0, "lib-b namespace classes should be in JAR (transitive dep)"
+    assert len(lib_c_classes) > 0, "lib-c namespace classes should be in JAR (deep transitive dep)"

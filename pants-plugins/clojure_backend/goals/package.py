@@ -325,9 +325,8 @@ Created-By: Pants Build System
                 aot_entries.add(arcname)
 
         # Step 2: Extract dependency JARs
-        # JAR contents OVERRIDE AOT classes - this is intentional for protocol safety
+        # JAR classes OVERRIDE AOT classes - this is intentional for protocol safety
         # Pre-compiled library classes have correct protocol relationships
-        # Note: ZIP format allows duplicate entries; the LAST entry wins during extraction
         overridden_count = 0
         for file_content in digest_contents:
             if file_content.path.endswith('.jar'):
@@ -348,18 +347,26 @@ Created-By: Pants Build System
                     with zipfile.ZipFile(jar_bytes, 'r') as dep_jar:
                         for item in dep_jar.namelist():
                             # Skip META-INF files from dependencies
-                            if not item.startswith('META-INF/'):
-                                try:
-                                    data = dep_jar.read(item)
-                                    if item in aot_entries:
-                                        # JAR class overrides AOT class (protocol safety)
-                                        overridden_count += 1
-                                        logger.debug(f"JAR class overrides AOT: {item}")
-                                    jar.writestr(item, data)
-                                    added_entries.add(item)
-                                except Exception:
-                                    # Skip bad entries
-                                    pass
+                            if item.startswith('META-INF/'):
+                                continue
+
+                            # Skip if already processed (from another JAR or already overridden)
+                            if item in added_entries:
+                                continue
+
+                            # Check if this is an AOT-compiled .class file that should be overridden
+                            if item in aot_entries:
+                                # JAR class overrides AOT class (protocol safety)
+                                overridden_count += 1
+                                logger.debug(f"JAR class overrides AOT: {item}")
+
+                            # Write the entry (either new, or overriding AOT)
+                            try:
+                                data = dep_jar.read(item)
+                                jar.writestr(item, data)
+                                added_entries.add(item)
+                            except Exception:
+                                pass
                 except Exception:
                     # Skip invalid JAR files
                     pass
