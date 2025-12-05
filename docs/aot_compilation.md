@@ -8,6 +8,144 @@ When you create a `clojure_deploy_jar`, the plugin AOT-compiles your Clojure nam
 
 This transitive compilation is a well-known behavior in the Clojure ecosystem, and all major build tools (tools.build, Leiningen, Boot, depstar) have mechanisms to handle it.
 
+## AOT Modes
+
+The `clojure_deploy_jar` target supports four AOT modes via the `aot` field:
+
+### Mode 1: No AOT (`:none`)
+
+```python
+clojure_deploy_jar(
+    name="app",
+    main="my.app.core",
+    aot=[":none"],
+)
+```
+
+Creates a source-only JAR. All Clojure code is compiled at runtime when the application starts.
+
+**Running the JAR:**
+```bash
+# Source-only JARs are NOT directly executable
+# This will NOT work:
+java -jar app.jar  # ERROR: no main manifest attribute
+
+# Instead, run with:
+java -cp app.jar clojure.main -m my.app.core
+```
+
+**Pros:**
+- No AOT-related issues (protocol identity, record equality, etc.)
+- Simpler build process
+- Works with all libraries regardless of their AOT compatibility
+- Smaller JAR size (no duplicate .class files)
+
+**Cons:**
+- Slower startup (compilation happens at runtime, can be 10-30+ seconds)
+- Not directly executable with `java -jar`
+
+**When to use:**
+- Libraries with known AOT issues
+- Development/testing where startup time is acceptable
+- Maximum compatibility needed
+
+### Mode 2: AOT Main Only (default)
+
+```python
+clojure_deploy_jar(
+    name="app",
+    main="my.app.core",
+    # aot=() or omit entirely
+)
+```
+
+Compiles the main namespace and all its transitive dependencies.
+
+**Running the JAR:**
+```bash
+java -jar app.jar
+```
+
+**Pros:**
+- Fast startup for the main execution path
+- JAR is directly executable
+- Good balance of startup speed and compatibility
+
+**Cons:**
+- Transitively compiles third-party code (mitigated by our two-pass strategy)
+- Requires `(:gen-class)` in main namespace
+
+**When to use:**
+- Most applications (recommended default)
+- When you need `java -jar` execution
+
+### Mode 3: AOT All (`:all`)
+
+```python
+clojure_deploy_jar(
+    name="app",
+    main="my.app.core",
+    aot=[":all"],
+)
+```
+
+Compiles all project namespaces.
+
+**Pros:**
+- Fastest possible startup
+- All code paths pre-compiled
+
+**Cons:**
+- May cause protocol/record identity issues with some libraries
+- Larger build output
+
+**When to use:**
+- Performance-critical applications
+- When all dependencies are AOT-compatible
+- Batch processing jobs
+
+### Mode 4: AOT Specific Namespaces
+
+```python
+clojure_deploy_jar(
+    name="app",
+    main="my.app.core",
+    aot=["my.app.core", "my.app.critical"],
+)
+```
+
+Compiles only the specified namespaces.
+
+**Pros:**
+- Fine-grained control over what gets compiled
+- Can target hot code paths
+
+**Cons:**
+- Requires manual namespace management
+- Namespace dependencies may pull in more than expected (transitive compilation)
+
+**When to use:**
+- When you need specific namespaces compiled but want to avoid full `:all`
+- Performance tuning specific paths
+
+## Comparison with Leiningen
+
+| Feature | Leiningen | Pants Clojure |
+|---------|-----------|---------------|
+| No AOT | Default (omit `:aot`) | `aot=[":none"]` |
+| AOT main only | `:aot [main.ns]` | Default (omit `aot`) |
+| AOT all | `:aot :all` | `aot=[":all"]` |
+| AOT specific | `:aot [ns1 ns2]` | `aot=["ns1", "ns2"]` |
+
+**Why different defaults?**
+
+Leiningen defaults to no AOT because it prioritizes compatibility and follows a more traditional Clojure development workflow.
+
+Pants defaults to AOT main because:
+- Most users expect `java -jar` to work out of the box
+- Faster startup is typically desired for deployed applications
+- Users can explicitly opt out with `:none`
+
 ## How It Works
 
 ### The Challenge
