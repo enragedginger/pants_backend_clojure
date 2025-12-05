@@ -240,11 +240,17 @@ class ClojureAOTNamespacesField(StringSequenceField):
     alias = "aot"
     help = (
         "Namespaces to AOT compile. Options:\n"
+        "- [':none']: No AOT compilation (source-only JAR, not directly executable)\n"
         "- Empty (default): Compile only main namespace (transitive)\n"
         "- [':all']: Compile all project namespaces from dependencies\n"
         "- ['ns1', 'ns2']: Compile specific namespaces\n\n"
         "Note: AOT compilation is transitive - compiling a namespace will "
-        "automatically compile all namespaces it requires."
+        "automatically compile all namespaces it requires.\n\n"
+        "The ':none' mode creates a source-only JAR that defers all compilation "
+        "to runtime. This avoids AOT-related issues but:\n"
+        "- Results in slower startup (compilation happens at runtime)\n"
+        "- JAR is not directly executable with 'java -jar'\n"
+        "- Run with: java -cp app.jar clojure.main -m my.app.core"
     )
     default = ()  # Empty = main namespace only (transitive)
 

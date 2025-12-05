@@ -1661,3 +1661,360 @@ def test_hyphenated_namespace_classes_included(rule_runner: RuleRunner) -> None:
     # Verify the core class specifically
     assert any('my_lib/core' in e and e.endswith('.class') for e in my_lib_classes), \
         "my_lib/core classes should be present"
+
+
+# =============================================================================
+# Tests for AOT :none mode (source-only JARs)
+# =============================================================================
+
+
+def test_package_deploy_jar_with_aot_none(rule_runner: RuleRunner) -> None:
+    """Test packaging with aot=':none' creates source-only JAR."""
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/app/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="app.core",
+                    aot=[":none"],
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            # Note: no (:gen-class) - not required for :none
+            "src/app/core.clj": dedent(
+                """\
+                (ns app.core)
+
+                (defn -main [& args]
+                  (println "Hello"))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/app", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    result = rule_runner.request(BuiltPackage, [field_set])
+
+    # Verify JAR was created
+    assert len(result.artifacts) == 1
+
+    # Extract and examine JAR contents
+    jar_path = result.artifacts[0].relpath
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None
+
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        entries = jar.namelist()
+
+        # Should have first-party source files
+        source_files = [e for e in entries if e.endswith('.clj') and e.startswith('app/')]
+        assert len(source_files) > 0, \
+            f"Expected first-party source file not found in {entries}"
+        assert 'app/core.clj' in entries, \
+            f"Expected app/core.clj in JAR, found: {entries}"
+
+        # Should NOT have first-party compiled classes
+        first_party_classes = [e for e in entries if e.startswith('app/') and e.endswith('.class')]
+        assert not first_party_classes, \
+            f"Unexpected first-party classes in source-only JAR: {first_party_classes}"
+
+        # Should have Clojure runtime (from dependency JARs)
+        assert any('clojure/core' in e for e in entries), \
+            "Clojure runtime not found in JAR"
+
+        # Check manifest
+        manifest = jar.read('META-INF/MANIFEST.MF').decode()
+        assert 'X-Source-Only: true' in manifest, \
+            f"Expected X-Source-Only manifest attribute, got: {manifest}"
+        assert 'Main-Namespace: app.core' in manifest, \
+            f"Expected Main-Namespace manifest attribute, got: {manifest}"
+
+
+def test_package_deploy_jar_aot_none_no_gen_class_required(rule_runner: RuleRunner) -> None:
+    """Test that :none mode doesn't require (:gen-class)."""
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/app/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="app.core",
+                    aot=[":none"],
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            # Note: NO (:gen-class) in ns declaration
+            "src/app/core.clj": dedent(
+                """\
+                (ns app.core)
+
+                (defn -main [& args]
+                  (println "Hi"))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/app", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    # Should NOT raise ValueError about missing gen-class
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+
+def test_package_deploy_jar_aot_none_cannot_combine(rule_runner: RuleRunner) -> None:
+    """Test that :none cannot be combined with other AOT values."""
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/app/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="app.core",
+                    aot=[":none", ":all"],
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/app/core.clj": dedent(
+                """\
+                (ns app.core
+                  (:gen-class))
+
+                (defn -main [& args]
+                  (println "Hi"))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/app", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    # Should raise an error about invalid combination
+    with pytest.raises(ExecutionError) as exc_info:
+        rule_runner.request(BuiltPackage, [field_set])
+
+    # Verify the wrapped exception is a ValueError with the right message
+    assert len(exc_info.value.wrapped_exceptions) == 1
+    wrapped_exc = exc_info.value.wrapped_exceptions[0]
+    assert isinstance(wrapped_exc, ValueError)
+    assert "':none' cannot be combined" in str(wrapped_exc)
+
+
+def test_package_deploy_jar_aot_none_includes_cljc(rule_runner: RuleRunner) -> None:
+    """Test that :none mode includes .cljc files."""
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/app/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=[":util", "3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_source(
+                    name="util",
+                    source="util.cljc",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="app.core",
+                    aot=[":none"],
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/app/core.clj": dedent(
+                """\
+                (ns app.core
+                  (:require [app.util]))
+
+                (defn -main [& args]
+                  (app.util/greet))
+                """
+            ),
+            "src/app/util.cljc": dedent(
+                """\
+                (ns app.util)
+
+                (defn greet []
+                  (println "Hello"))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/app", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+    # Extract and examine JAR contents
+    jar_path = result.artifacts[0].relpath
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None
+
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        entries = jar.namelist()
+
+        # Should have both .clj and .cljc files
+        assert 'app/core.clj' in entries, \
+            f"Expected app/core.clj in JAR, found: {entries}"
+        assert 'app/util.cljc' in entries, \
+            f"Expected app/util.cljc in JAR, found: {entries}"
+
+
+def test_package_deploy_jar_aot_none_with_transitive_deps(rule_runner: RuleRunner) -> None:
+    """Test that :none mode includes transitive first-party dependencies as source."""
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            # A library namespace
+            "src/mylib/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="utils",
+                    source="utils.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+                """
+            ),
+            "src/mylib/utils.clj": dedent(
+                """\
+                (ns mylib.utils)
+
+                (defn format-greeting [name]
+                  (str "Hello, " name "!"))
+                """
+            ),
+            # The main app that depends on the library
+            "src/myapp/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["//src/mylib:utils", "3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="myapp.core",
+                    aot=[":none"],
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/myapp/core.clj": dedent(
+                """\
+                (ns myapp.core
+                  (:require [mylib.utils :as utils]))
+
+                (defn -main [& args]
+                  (println (utils/format-greeting "World")))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/myapp", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+    # Extract and examine JAR contents
+    jar_path = result.artifacts[0].relpath
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None
+
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        entries = jar.namelist()
+
+        # Should have main app source
+        assert 'myapp/core.clj' in entries, \
+            f"Expected myapp/core.clj in JAR, found: {entries}"
+
+        # Should have transitive library source
+        assert 'mylib/utils.clj' in entries, \
+            f"Expected transitive mylib/utils.clj in JAR, found: {entries}"
+
+        # Should NOT have first-party compiled classes
+        myapp_classes = [e for e in entries if e.startswith('myapp/') and e.endswith('.class')]
+        mylib_classes = [e for e in entries if e.startswith('mylib/') and e.endswith('.class')]
+        assert not myapp_classes, \
+            f"Unexpected myapp classes in source-only JAR: {myapp_classes}"
+        assert not mylib_classes, \
+            f"Unexpected mylib classes in source-only JAR: {mylib_classes}"
