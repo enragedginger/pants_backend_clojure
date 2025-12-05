@@ -1,16 +1,17 @@
 {
   "permissions": {
-    "additionalDirectories": [
-      "../../python/pants"
-    ],
     "allow": [
       "Bash(pants test:*)",
       "Bash(pants help:*)",
       "WebFetch(domain:clojure.org)",
       "Bash(pants list:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:leiningen.org)"
     ],
     "deny": [],
-    "ask": []
+    "ask": [],
+    "additionalDirectories": [
+      "../../python/pants"
+    ]
   }
 }
