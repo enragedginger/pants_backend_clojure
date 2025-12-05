@@ -311,8 +311,33 @@ Created-By: Pants Build System
         for group, artifact in provided_deps.coordinates:
             excluded_artifact_prefixes.add(f"{group}_{artifact}_")
 
-        # Step 1: Add ALL AOT-compiled classes first (except provided dependencies)
-        # These provide a baseline - source-only third-party libraries need these
+        # Pre-scan Step: Before writing any AOT classes, scan JARs to find what they contain
+        # This ensures we don't create duplicate ZIP entries (behavior is undefined for duplicates)
+        # By knowing what's in JARs upfront, we can skip AOT classes that would be replaced anyway
+        items_in_dependency_jars: set[str] = set()
+        for file_content in digest_contents:
+            if file_content.path.endswith('.jar'):
+                jar_filename = os.path.basename(file_content.path)
+                # Skip provided/excluded JARs (same logic as Step 2)
+                should_exclude = any(
+                    jar_filename.startswith(prefix) for prefix in excluded_artifact_prefixes
+                )
+                if should_exclude:
+                    continue
+
+                try:
+                    jar_bytes = io.BytesIO(file_content.content)
+                    with zipfile.ZipFile(jar_bytes, 'r') as dep_jar:
+                        for item in dep_jar.namelist():
+                            if item.startswith('META-INF/'):
+                                continue
+                            items_in_dependency_jars.add(item)
+                except Exception:
+                    pass
+
+        # Step 1: Add AOT-compiled classes EXCEPT those that exist in dependency JARs
+        # Source-only third-party libraries need their AOT classes included
+        # Pre-compiled libraries don't - we'll use the JAR version instead for protocol safety
         # Provided Clojure source dependencies are excluded (they're compile-only)
         for file_content in digest_contents:
             if file_content.path.startswith('classes/') and file_content.path.endswith('.class'):
@@ -320,23 +345,26 @@ Created-By: Pants Build System
                 # Skip classes belonging to provided Clojure source dependencies
                 if is_provided_class(arcname):
                     continue
+                # Skip AOT classes that will come from dependency JARs instead
+                # This avoids duplicate entries and ensures protocol safety
+                if arcname in items_in_dependency_jars:
+                    aot_entries.add(arcname)  # Track for logging, but don't write
+                    continue
                 jar.writestr(arcname, file_content.content)
                 added_entries.add(arcname)
                 aot_entries.add(arcname)
 
         # Step 2: Extract dependency JARs
-        # JAR classes OVERRIDE AOT classes - this is intentional for protocol safety
+        # JAR classes are preferred over AOT classes for protocol safety
         # Pre-compiled library classes have correct protocol relationships
         overridden_count = 0
         for file_content in digest_contents:
             if file_content.path.endswith('.jar'):
                 # Check if this JAR should be excluded based on coordinates
                 jar_filename = os.path.basename(file_content.path)
-                should_exclude = False
-                for prefix in excluded_artifact_prefixes:
-                    if jar_filename.startswith(prefix):
-                        should_exclude = True
-                        break
+                should_exclude = any(
+                    jar_filename.startswith(prefix) for prefix in excluded_artifact_prefixes
+                )
 
                 if should_exclude:
                     # Skip this JAR - it's a provided dependency
@@ -350,17 +378,15 @@ Created-By: Pants Build System
                             if item.startswith('META-INF/'):
                                 continue
 
-                            # Skip if already processed (from another JAR or already overridden)
+                            # Skip if already added (from another JAR)
                             if item in added_entries:
                                 continue
 
-                            # Check if this is an AOT-compiled .class file that should be overridden
+                            # Track when we use JAR class instead of AOT
                             if item in aot_entries:
-                                # JAR class overrides AOT class (protocol safety)
                                 overridden_count += 1
-                                logger.debug(f"JAR class overrides AOT: {item}")
+                                logger.debug(f"Using JAR class instead of AOT: {item}")
 
-                            # Write the entry (either new, or overriding AOT)
                             try:
                                 data = dep_jar.read(item)
                                 jar.writestr(item, data)
@@ -372,9 +398,9 @@ Created-By: Pants Build System
                     pass
 
         if overridden_count > 0:
-            logger.debug(
-                f"Dependency JARs overrode {overridden_count} AOT-compiled classes for {field_set.address}. "
-                "This ensures pre-compiled library classes are used for protocol safety."
+            logger.info(
+                f"Used {overridden_count} classes from dependency JARs instead of AOT compilation "
+                f"for {field_set.address} (ensures Clojure protocol safety)"
             )
 
     # Create the output digest with the JAR file

@@ -1233,3 +1233,97 @@ def test_deeply_nested_transitive_deps_included(rule_runner: RuleRunner) -> None
     assert len(lib_a_classes) > 0, "lib-a namespace classes should be in JAR (direct dep)"
     assert len(lib_b_classes) > 0, "lib-b namespace classes should be in JAR (transitive dep)"
     assert len(lib_c_classes) > 0, "lib-c namespace classes should be in JAR (deep transitive dep)"
+
+
+def test_no_duplicate_entries_in_jar(rule_runner: RuleRunner) -> None:
+    """Verify that the final JAR has no duplicate entries.
+
+    Duplicate entries in JAR files have undefined behavior across different
+    JVM implementations and tools. This test ensures:
+    1. AOT classes that exist in dependency JARs are skipped (not duplicated)
+    2. Each class appears exactly once in the final JAR
+    3. JAR entries from dependency JARs are used instead of AOT-compiled versions
+       for protocol safety
+
+    The pre-scan approach identifies classes in dependency JARs before writing
+    any AOT classes, allowing us to skip AOT classes that would be overwritten.
+    """
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/myapp/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="myapp.core",
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/myapp/core.clj": dedent(
+                """\
+                (ns myapp.core
+                  (:require [clojure.string :as str])
+                  (:gen-class))
+
+                (defn -main [& args]
+                  (println (str/upper-case "hello")))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/myapp", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    # Package the JAR
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+    # Read the JAR
+    jar_path = result.artifacts[0].relpath
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None
+
+    # Parse the JAR and check for duplicate entries
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        entries = jar.namelist()
+        unique_entries = set(entries)
+
+        # Check for duplicates
+        if len(entries) != len(unique_entries):
+            # Find and report the duplicates
+            from collections import Counter
+            entry_counts = Counter(entries)
+            duplicates = [entry for entry, count in entry_counts.items() if count > 1]
+            pytest.fail(
+                f"JAR has {len(entries) - len(unique_entries)} duplicate entries: "
+                f"{duplicates[:10]}{'...' if len(duplicates) > 10 else ''}"
+            )
+
+    # Verify both AOT and JAR classes are present (no missing coverage)
+    # Project classes from AOT (not in any JAR)
+    myapp_classes = [e for e in unique_entries if e.startswith('myapp/')]
+    assert len(myapp_classes) > 0, "Project myapp classes should be in JAR"
+
+    # Clojure classes from dependency JAR (not from AOT)
+    clojure_classes = [e for e in unique_entries if e.startswith('clojure/')]
+    assert len(clojure_classes) > 0, "Clojure classes should be in JAR"
