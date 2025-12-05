@@ -127,6 +127,17 @@ async def package_clojure_deploy_jar(
         )
         digest_contents = []
 
+    # Build set of first-party namespace paths for filtering AOT classes
+    # These represent namespaces from clojure_source targets in the project
+    first_party_namespace_paths: set[str] = set()
+    for source_path, namespace in namespace_analysis.namespaces.items():
+        # Convert namespace to class path: my.app.core -> my/app/core
+        # Clojure converts hyphens to underscores in class names
+        namespace_path = namespace.replace('.', '/').replace('-', '_')
+        first_party_namespace_paths.add(namespace_path)
+
+    logger.debug(f"First-party namespaces: {first_party_namespace_paths}")
+
     # Determine which namespaces to compile
     namespaces_to_compile: tuple[str, ...]
 
@@ -281,6 +292,16 @@ async def package_clojure_deploy_jar(
             base_class_path = base_class_path[:-6]  # len('__init') == 6
         return base_class_path in provided_namespace_paths
 
+    def is_first_party_class(arcname: str) -> bool:
+        """Check if a class file belongs to a first-party namespace."""
+        if not first_party_namespace_paths:
+            return True  # Fallback: include all if no analysis available
+        class_path = arcname[:-6]  # Remove .class
+        base_class_path = class_path.split('$')[0]  # Handle inner classes
+        if base_class_path.endswith('__init'):
+            base_class_path = base_class_path[:-6]
+        return base_class_path in first_party_namespace_paths
+
     # Create JAR manifest with main class
     manifest_content = f"""\
 Manifest-Version: 1.0
@@ -300,9 +321,8 @@ Created-By: Pants Build System
         # Write manifest first (uncompressed as per JAR spec)
         jar.writestr('META-INF/MANIFEST.MF', manifest_content, compress_type=zipfile.ZIP_STORED)
 
-        # Track what we've added for logging purposes
+        # Track what we've added to avoid duplicates
         added_entries = {'META-INF/MANIFEST.MF'}
-        aot_entries = set()
 
         # Build set of artifact prefixes to exclude based on coordinates
         # Pants/Coursier JAR filenames follow: {group}_{artifact}_{version}.jar pattern
@@ -311,82 +331,49 @@ Created-By: Pants Build System
         for group, artifact in provided_deps.coordinates:
             excluded_artifact_prefixes.add(f"{group}_{artifact}_")
 
-        # Pre-scan Step: Before writing any AOT classes, scan JARs to find what they contain
-        # This ensures we don't create duplicate ZIP entries (behavior is undefined for duplicates)
-        # By knowing what's in JARs upfront, we can skip AOT classes that would be replaced anyway
-        items_in_dependency_jars: set[str] = set()
-        for file_content in digest_contents:
-            if file_content.path.endswith('.jar'):
-                jar_filename = os.path.basename(file_content.path)
-                # Skip provided/excluded JARs (same logic as Step 2)
-                should_exclude = any(
-                    jar_filename.startswith(prefix) for prefix in excluded_artifact_prefixes
-                )
-                if should_exclude:
-                    continue
-
-                try:
-                    jar_bytes = io.BytesIO(file_content.content)
-                    with zipfile.ZipFile(jar_bytes, 'r') as dep_jar:
-                        for item in dep_jar.namelist():
-                            if item.startswith('META-INF/'):
-                                continue
-                            items_in_dependency_jars.add(item)
-                except Exception:
-                    pass
-
-        # Step 1: Add AOT-compiled classes EXCEPT those that exist in dependency JARs
-        # Source-only third-party libraries need their AOT classes included
-        # Pre-compiled libraries don't - we'll use the JAR version instead for protocol safety
+        # Step 1: Add ONLY first-party AOT-compiled classes
+        # Third-party AOT output is discarded - their content comes from JARs
         # Provided Clojure source dependencies are excluded (they're compile-only)
+        first_party_count = 0
+        third_party_skipped = 0
+
         for file_content in digest_contents:
             if file_content.path.startswith('classes/') and file_content.path.endswith('.class'):
                 arcname = file_content.path[8:]  # len('classes/') == 8
                 # Skip classes belonging to provided Clojure source dependencies
                 if is_provided_class(arcname):
                     continue
-                # Skip AOT classes that will come from dependency JARs instead
-                # This avoids duplicate entries and ensures protocol safety
-                if arcname in items_in_dependency_jars:
-                    aot_entries.add(arcname)  # Track for logging, but don't write
-                    continue
-                jar.writestr(arcname, file_content.content)
-                added_entries.add(arcname)
-                aot_entries.add(arcname)
+                # Only include first-party classes from AOT
+                # Third-party content comes from JARs (whether .class or .clj files)
+                if is_first_party_class(arcname):
+                    jar.writestr(arcname, file_content.content)
+                    added_entries.add(arcname)
+                    first_party_count += 1
+                else:
+                    third_party_skipped += 1
+
+        logger.info(f"AOT: included {first_party_count} first-party classes, "
+                    f"skipped {third_party_skipped} third-party classes")
 
         # Step 2: Extract dependency JARs
-        # JAR classes are preferred over AOT classes for protocol safety
-        # Pre-compiled library classes have correct protocol relationships
-        overridden_count = 0
+        # All third-party content comes from here (.class, .clj, resources)
         for file_content in digest_contents:
             if file_content.path.endswith('.jar'):
-                # Check if this JAR should be excluded based on coordinates
                 jar_filename = os.path.basename(file_content.path)
                 should_exclude = any(
                     jar_filename.startswith(prefix) for prefix in excluded_artifact_prefixes
                 )
-
                 if should_exclude:
-                    # Skip this JAR - it's a provided dependency
                     continue
 
                 try:
                     jar_bytes = io.BytesIO(file_content.content)
                     with zipfile.ZipFile(jar_bytes, 'r') as dep_jar:
                         for item in dep_jar.namelist():
-                            # Skip META-INF files from dependencies
                             if item.startswith('META-INF/'):
                                 continue
-
-                            # Skip if already added (from another JAR)
                             if item in added_entries:
-                                continue
-
-                            # Track when we use JAR class instead of AOT
-                            if item in aot_entries:
-                                overridden_count += 1
-                                logger.debug(f"Using JAR class instead of AOT: {item}")
-
+                                continue  # Already added from another JAR
                             try:
                                 data = dep_jar.read(item)
                                 jar.writestr(item, data)
@@ -394,14 +381,7 @@ Created-By: Pants Build System
                             except Exception:
                                 pass
                 except Exception:
-                    # Skip invalid JAR files
                     pass
-
-        if overridden_count > 0:
-            logger.info(
-                f"Used {overridden_count} classes from dependency JARs instead of AOT compilation "
-                f"for {field_set.address} (ensures Clojure protocol safety)"
-            )
 
     # Create the output digest with the JAR file
     jar_bytes = jar_buffer.getvalue()

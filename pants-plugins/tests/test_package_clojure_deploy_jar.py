@@ -1327,3 +1327,337 @@ def test_no_duplicate_entries_in_jar(rule_runner: RuleRunner) -> None:
     # Clojure classes from dependency JAR (not from AOT)
     clojure_classes = [e for e in unique_entries if e.startswith('clojure/')]
     assert len(clojure_classes) > 0, "Clojure classes should be in JAR"
+
+
+# =============================================================================
+# Tests for first-party-only AOT filtering
+# =============================================================================
+# These tests verify the new behavior where only first-party AOT classes are
+# included, and all third-party content comes from dependency JARs.
+
+
+def test_only_first_party_aot_classes_included(rule_runner: RuleRunner) -> None:
+    """Verify that only first-party namespace classes are included from AOT.
+
+    This tests the core filtering logic:
+    1. First-party classes (from clojure_source targets) are included from AOT
+    2. Inner classes ($) for first-party namespaces are handled correctly
+    3. __init classes for first-party namespaces are handled correctly
+    """
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/myapp/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="myapp.core",
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/myapp/core.clj": dedent(
+                """\
+                (ns myapp.core
+                  (:require [clojure.string :as str])
+                  (:gen-class))
+
+                (defn -main [& args]
+                  (println (str/upper-case "hello")))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/myapp", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+    jar_path = result.artifacts[0].relpath
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None
+
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        jar_entries = set(jar.namelist())
+
+    # First-party classes should be present
+    myapp_classes = [e for e in jar_entries if e.startswith('myapp/')]
+    assert len(myapp_classes) > 0, "First-party myapp classes should be in JAR"
+
+    # Verify specific class patterns for first-party namespace
+    assert any('myapp/core' in e and e.endswith('.class') for e in myapp_classes), \
+        "myapp.core namespace classes should be present"
+    # __init class should be present
+    assert any('myapp/core__init.class' in e for e in myapp_classes), \
+        "myapp.core __init class should be present"
+    # Inner classes ($) should be handled correctly if present
+    # (gen-class often creates inner classes for interfaces)
+    inner_classes = [e for e in myapp_classes if '$' in e]
+    # Note: We don't require inner classes since gen-class may not create them,
+    # but if they exist, they should match our namespace
+    for entry in inner_classes:
+        assert entry.startswith('myapp/'), \
+            f"Inner class {entry} should be under myapp/ namespace"
+
+
+def test_third_party_classes_not_from_aot(rule_runner: RuleRunner) -> None:
+    """Verify that third-party classes (e.g., clojure/core*.class) are NOT from AOT.
+
+    The third-party classes should come from the dependency JARs, not from AOT.
+    This is critical for protocol safety - AOT-compiled third-party classes have
+    different protocol identities than the JAR versions.
+
+    We verify this by checking that clojure classes exist in the JAR (from the
+    Clojure dependency JAR) but we don't have a way to directly check "not from AOT"
+    without timestamps. Instead, we verify the expected behavior that third-party
+    classes ARE present (they come from JARs, not discarded).
+    """
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/myapp/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="myapp.core",
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/myapp/core.clj": dedent(
+                """\
+                (ns myapp.core
+                  (:require [clojure.string :as str])
+                  (:gen-class))
+
+                (defn -main [& args]
+                  (println (str/upper-case "hello")))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/myapp", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+    jar_path = result.artifacts[0].relpath
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None
+
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        jar_entries = set(jar.namelist())
+
+    # Third-party Clojure classes should be present (from JAR, not AOT)
+    clojure_core_classes = [e for e in jar_entries if e.startswith('clojure/core')]
+    assert len(clojure_core_classes) > 0, \
+        "Third-party clojure.core classes should be in JAR (from dependency JAR)"
+
+    # clojure.string classes should be present
+    clojure_string_classes = [e for e in jar_entries if e.startswith('clojure/string')]
+    assert len(clojure_string_classes) > 0, \
+        "Third-party clojure.string classes should be in JAR (from dependency JAR)"
+
+
+def test_third_party_content_extracted_from_jars(rule_runner: RuleRunner) -> None:
+    """Verify that all third-party content (.class, .clj, resources) comes from JARs.
+
+    This test ensures that source-only libraries have their .clj files included
+    from the JAR. We check for various types of content from the Clojure JAR.
+    """
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/myapp/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="myapp.core",
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/myapp/core.clj": dedent(
+                """\
+                (ns myapp.core
+                  (:gen-class))
+
+                (defn -main [& args]
+                  (println "Hello"))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/myapp", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+    jar_path = result.artifacts[0].relpath
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None
+
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        jar_entries = set(jar.namelist())
+
+    # Check for .class files from Clojure JAR
+    clojure_class_files = [e for e in jar_entries if e.startswith('clojure/') and e.endswith('.class')]
+    assert len(clojure_class_files) > 0, "Clojure .class files should be extracted from JAR"
+
+    # Check for .clj files from Clojure JAR (Clojure includes source in its JAR)
+    clojure_clj_files = [e for e in jar_entries if e.startswith('clojure/') and e.endswith('.clj')]
+    assert len(clojure_clj_files) > 0, "Clojure .clj files should be extracted from JAR"
+
+
+def test_hyphenated_namespace_classes_included(rule_runner: RuleRunner) -> None:
+    """Verify that first-party namespaces with hyphens are handled correctly.
+
+    Clojure converts hyphens to underscores in class file names:
+    - Namespace: my-lib.core
+    - Class file: my_lib/core.class
+
+    This test ensures the hyphen-to-underscore conversion works correctly
+    for first-party namespace detection.
+    """
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/my_lib/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+                """
+            ),
+            "src/my_lib/core.clj": dedent(
+                """\
+                (ns my-lib.core)
+
+                (defn helper []
+                  "helper function")
+                """
+            ),
+            "src/myapp/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["//src/my_lib:core", "3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="myapp.core",
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/myapp/core.clj": dedent(
+                """\
+                (ns myapp.core
+                  (:require [my-lib.core :as lib])
+                  (:gen-class))
+
+                (defn -main [& args]
+                  (println (lib/helper)))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/myapp", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+    jar_path = result.artifacts[0].relpath
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None
+
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        jar_entries = set(jar.namelist())
+
+    # my-lib.core should produce my_lib/core*.class files
+    my_lib_classes = [e for e in jar_entries if e.startswith('my_lib/')]
+    assert len(my_lib_classes) > 0, (
+        "Hyphenated namespace my-lib.core should have classes in JAR as my_lib/core*.class"
+    )
+
+    # Verify the core class specifically
+    assert any('my_lib/core' in e and e.endswith('.class') for e in my_lib_classes), \
+        "my_lib/core classes should be present"
