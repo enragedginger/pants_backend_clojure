@@ -419,45 +419,13 @@ Created-By: Pants Build System
         for group, artifact in provided_deps.coordinates:
             excluded_artifact_prefixes.add(f"{group}_{artifact}_")
 
-        # Step 1: Add ONLY first-party AOT-compiled classes
-        # Third-party AOT output is discarded - their content comes from JARs
-        # Provided Clojure source dependencies are excluded (they're compile-only)
-        first_party_count = 0
-        third_party_skipped = 0
+        # Pre-scan all dependency JARs once to:
+        # 1. Build index of available classes (for AOT filtering in Step 1)
+        # 2. Collect JAR entries for later extraction (Step 2)
+        # This enables detecting macro-generated classes that don't exist in any JAR.
+        jar_class_files: set[str] = set()
+        jar_entries_to_extract: list[tuple[str, bytes]] = []
 
-        for file_content in digest_contents:
-            if file_content.path.startswith('classes/') and file_content.path.endswith('.class'):
-                arcname = file_content.path[8:]  # len('classes/') == 8
-                # Skip classes belonging to provided Clojure source dependencies
-                if is_provided_class(arcname):
-                    continue
-                # Only include first-party classes from AOT
-                # Third-party content comes from JARs (whether .class or .clj files)
-                if is_first_party_class(arcname):
-                    jar.writestr(arcname, file_content.content)
-                    added_entries.add(arcname)
-                    first_party_count += 1
-                else:
-                    third_party_skipped += 1
-
-        logger.info(f"AOT: included {first_party_count} first-party classes, "
-                    f"skipped {third_party_skipped} third-party classes")
-
-        # Step 1.5: Add first-party source files when skip_aot=True
-        # (When AOT is enabled, first-party sources are compiled to classes)
-        if skip_aot and stripped_source_contents:
-            source_count = 0
-            for file_content in stripped_source_contents:
-                arcname = file_content.path
-                if arcname not in added_entries:
-                    jar.writestr(arcname, file_content.content)
-                    added_entries.add(arcname)
-                    source_count += 1
-
-            logger.info(f"Added {source_count} first-party source files for source-only JAR")
-
-        # Step 2: Extract dependency JARs
-        # All third-party content comes from here (.class, .clj, resources)
         for file_content in digest_contents:
             if file_content.path.endswith('.jar'):
                 jar_filename = os.path.basename(file_content.path)
@@ -478,16 +446,81 @@ Created-By: Pants Build System
                             item_basename = os.path.basename(item).upper()
                             if item_basename.startswith('LICENSE'):
                                 continue
-                            if item in added_entries:
-                                continue  # Already added from another JAR
+
+                            # Index class files for AOT filtering
+                            if item.endswith('.class'):
+                                jar_class_files.add(item)
+
+                            # Store entry for later extraction in Step 2
                             try:
                                 data = dep_jar.read(item)
-                                jar.writestr(item, data)
-                                added_entries.add(item)
+                                jar_entries_to_extract.append((item, data))
                             except Exception:
                                 pass
                 except Exception:
                     pass
+
+        logger.debug(f"Found {len(jar_class_files)} classes in dependency JARs")
+
+        # Step 1: Add AOT-compiled classes
+        # - First-party classes: always include from AOT
+        # - Third-party classes NOT in any JAR: include from AOT (macro-generated)
+        # - Third-party classes that exist in JARs: skip (will come from JAR in Step 2)
+        #
+        # Why check JAR contents? Some macros (like Specter's declarepath) generate
+        # classes in the macro's namespace, not the caller's namespace. These classes
+        # don't exist in the original JAR - they're only created during AOT compilation
+        # of code that USES the macro. We must keep these or get NoClassDefFoundError.
+        first_party_count = 0
+        third_party_aot_kept_count = 0  # Classes not in any JAR (macro-generated)
+        third_party_skipped = 0
+
+        for file_content in digest_contents:
+            if file_content.path.startswith('classes/') and file_content.path.endswith('.class'):
+                arcname = file_content.path[8:]  # len('classes/') == 8
+                # Skip classes belonging to provided Clojure source dependencies
+                if is_provided_class(arcname):
+                    continue
+
+                if is_first_party_class(arcname):
+                    # First-party class: include from AOT
+                    jar.writestr(arcname, file_content.content)
+                    added_entries.add(arcname)
+                    first_party_count += 1
+                elif arcname not in jar_class_files:
+                    # Third-party class not in any JAR - must be macro-generated
+                    # Keep from AOT output since no JAR can provide it
+                    jar.writestr(arcname, file_content.content)
+                    added_entries.add(arcname)
+                    third_party_aot_kept_count += 1
+                else:
+                    # Third-party class that exists in a JAR: skip
+                    # Will be added in Step 2 from the original JAR (protocol safety)
+                    third_party_skipped += 1
+
+        logger.info(f"AOT: included {first_party_count} first-party classes, "
+                    f"{third_party_aot_kept_count} macro-generated classes (not in JARs), "
+                    f"skipped {third_party_skipped} third-party classes (from JARs)")
+
+        # Step 1.5: Add first-party source files when skip_aot=True
+        # (When AOT is enabled, first-party sources are compiled to classes)
+        if skip_aot and stripped_source_contents:
+            source_count = 0
+            for file_content in stripped_source_contents:
+                arcname = file_content.path
+                if arcname not in added_entries:
+                    jar.writestr(arcname, file_content.content)
+                    added_entries.add(arcname)
+                    source_count += 1
+
+            logger.info(f"Added {source_count} first-party source files for source-only JAR")
+
+        # Step 2: Extract dependency JAR contents (pre-collected during index build)
+        # All third-party content comes from here (.class, .clj, resources)
+        for arcname, data in jar_entries_to_extract:
+            if arcname not in added_entries:
+                jar.writestr(arcname, data)
+                added_entries.add(arcname)
 
     # Validate that the manifest's Main-Class is actually in the JAR
     if not skip_aot:

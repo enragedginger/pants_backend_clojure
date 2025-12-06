@@ -130,11 +130,43 @@ The class `com/example/CustomMain.class` is included even though `com.example` d
 | AOT compiles transitively | Yes | Yes | Yes |
 | Third-party in final JAR | Yes | Yes | Yes |
 | Source of third-party classes | Dependency JARs | Class-dir or JARs (configurable) | Dependency JARs only |
-| Third-party AOT classes | Implicitly discarded | Kept (may override JARs) | Explicitly discarded |
+| Third-party AOT classes | Implicitly discarded | Kept (may override JARs) | Explicitly discarded (if in JAR) |
 | Protocol safety | Safe | Depends on config | Safe by default |
 | Conflict resolution | Last wins (JAR merge order) | Configurable strategies | First-party AOT, then JARs |
 | First-party detection | Directory structure | N/A (includes all) | Source analysis |
 | Custom gen-class :name | Broken if filtering enabled | Works (no filtering) | Works (source analysis) |
+| Macro-generated classes | Works (merge order side-effect) | Works if class-dir first | Works (JAR contents check) |
+
+## Macro-Generated Classes
+
+Some Clojure macros generate classes in the **macro's namespace** rather than the calling namespace. For example:
+
+- **Specter's `declarepath`** generates `com.rpl.specter.impl$local_declarepath`
+- **core.async's `go`** generates state machine classes in `clojure.core.async.impl`
+- **core.match** generates pattern matching classes in its impl namespace
+
+These classes don't exist in the original library JAR - they're only created during AOT compilation of YOUR code that uses the macro.
+
+### How Each Tool Handles This
+
+| Tool | Behavior | Why It Works (or Doesn't) |
+|------|----------|---------------------------|
+| **Leiningen** | Works | AOT classes are added first, JARs merged after. Since no JAR contains the macro-generated class, nothing overwrites it. Works by accident of merge order. |
+| **tools.build** | Usually works | With default `:ignore` conflict strategy and class-dir processed first, AOT classes survive. But behavior depends on configuration. |
+| **pants-clojure** | Works | We explicitly check if each AOT class exists in any dependency JAR. If not found in any JAR, we keep it from AOT output. Intentional, not accidental. |
+
+### Our Approach
+
+```
+For each AOT-generated class:
+  1. Is it first-party (matches our source namespaces)? → Keep from AOT
+  2. Does it exist in any dependency JAR? → Discard, use JAR version
+  3. Not in any JAR? → Keep from AOT (it's macro-generated)
+```
+
+This gives us the best of both worlds:
+- **Protocol safety**: Third-party classes that exist in JARs come from JARs
+- **Macro support**: Classes that don't exist anywhere except AOT output are kept
 
 ## Why Our Approach is Safer
 
