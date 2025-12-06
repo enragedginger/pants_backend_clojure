@@ -1871,6 +1871,81 @@ def test_hyphenated_namespace_classes_included(rule_runner: RuleRunner) -> None:
         "my_lib/core classes should be present"
 
 
+def test_hyphenated_main_namespace(rule_runner: RuleRunner) -> None:
+    """Verify that hyphenated main namespaces work correctly.
+
+    When the main namespace has hyphens (e.g., my-app.core), the generated
+    class name should use underscores (my_app.core). This test ensures the
+    main class name is correctly munged.
+    """
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/my_app/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="my-app.core",
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/my_app/core.clj": dedent(
+                """\
+                (ns my-app.core
+                  (:gen-class))
+
+                (defn -main [& args]
+                  (println "Hello from my-app!"))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/my_app", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+    jar_path = result.artifacts[0].relpath
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None
+
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        jar_entries = set(jar.namelist())
+        manifest = jar.read('META-INF/MANIFEST.MF').decode('utf-8')
+
+    # Main class should be munged to use underscores
+    assert 'Main-Class: my_app.core' in manifest, (
+        f"Main-Class should be 'my_app.core' (munged from my-app.core), got: {manifest}"
+    )
+
+    # The class files should exist with underscored path
+    my_app_classes = [e for e in jar_entries if e.startswith('my_app/')]
+    assert len(my_app_classes) > 0, (
+        "Hyphenated main namespace my-app.core should have classes in JAR as my_app/core*.class"
+    )
+
+
 # =============================================================================
 # Tests for source-only JARs (main="clojure.main")
 # =============================================================================

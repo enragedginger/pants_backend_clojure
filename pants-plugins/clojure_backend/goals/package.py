@@ -198,7 +198,9 @@ async def package_clojure_deploy_jar(
                 f"  3. Ensure the namespace follows Clojure naming conventions\n"
             )
 
-        main_class_name = main_namespace
+        # Default class name is namespace with hyphens munged to underscores
+        # Clojure always munges hyphens to underscores in generated class names
+        main_class_name = main_namespace.replace('-', '_')
         # Check for (:gen-class) in the namespace declaration
         # Use a more robust check that looks for gen-class in the ns form, not just anywhere
         # This regex looks for (ns ...) followed by gen-class before the closing paren
