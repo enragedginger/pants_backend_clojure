@@ -31,6 +31,40 @@ The main namespace must include `(:gen-class)` and define a `-main` function:
 java -jar my-app.jar
 ```
 
+## Using Custom Class Names with gen-class
+
+You can specify a custom class name using `:gen-class :name`:
+
+```clojure
+(ns my.app.core
+  (:gen-class :name com.example.MyApp))
+
+(defn -main [& args]
+  (println "Hello from custom class!"))
+```
+
+The manifest will use `com.example.MyApp` as the Main-Class, and this class will be correctly included in the uberjar.
+
+**Use cases for custom class names:**
+- Matching Java naming conventions (e.g., `com.company.ProductMain`)
+- Integration with Java tools that expect specific class names
+- Multi-main-class JARs where each entry point needs a distinct class name
+
+**Format requirements:**
+- The `:gen-class :name` declaration should be on a single line for proper detection
+- Multi-line gen-class forms with complex options are supported, but ensure `:name` appears early
+
+```clojure
+;; Supported - :name on same line as :gen-class
+(ns my.app.core
+  (:gen-class :name com.example.MyApp :implements [java.io.Serializable]))
+
+;; Also supported - :name on its own line immediately after :gen-class
+(ns my.app.core
+  (:gen-class
+    :name com.example.MyApp))
+```
+
 ## Direct Linking
 
 Compilation uses `:direct-linking true` for optimal performance. This:

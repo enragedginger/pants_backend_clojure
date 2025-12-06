@@ -197,7 +197,10 @@ def test_clojure_deploy_jar_target_has_required_fields() -> None:
 
 
 def test_package_deploy_jar_with_custom_gen_class_name(rule_runner: RuleRunner) -> None:
-    """Test packaging with a custom gen-class :name."""
+    """Test that (:gen-class :name X) generates X.class in JAR."""
+    import io
+    import zipfile
+
     setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
@@ -221,8 +224,7 @@ def test_package_deploy_jar_with_custom_gen_class_name(rule_runner: RuleRunner) 
             "src/custom/core.clj": dedent(
                 """\
                 (ns custom.core
-                  (:gen-class
-                    :name custom.MyMainClass))
+                  (:gen-class :name custom.MyMainClass))
 
                 (defn -main
                   [& args]
@@ -235,9 +237,178 @@ def test_package_deploy_jar_with_custom_gen_class_name(rule_runner: RuleRunner) 
     target = rule_runner.get_target(Address("src/custom", target_name="app"))
     field_set = ClojureDeployJarFieldSet.create(target)
 
-    # Should not raise an error and should package successfully
+    # Build the JAR
     result = rule_runner.request(BuiltPackage, [field_set])
     assert len(result.artifacts) == 1
+
+    # Extract and verify JAR contents
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_path = result.artifacts[0].relpath
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None, f"Could not find JAR file {jar_path} in digest"
+
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        entries = set(jar.namelist())
+
+        # Verify namespace init class is present
+        assert 'custom/core__init.class' in entries, \
+            f"Namespace init class not found. Entries: {sorted(entries)}"
+
+        # Verify custom gen-class :name class is present
+        assert 'custom/MyMainClass.class' in entries, \
+            f"Custom gen-class class not found. Entries: {sorted(entries)}"
+
+        # Verify manifest has correct Main-Class
+        manifest = jar.read('META-INF/MANIFEST.MF').decode()
+        assert 'Main-Class: custom.MyMainClass' in manifest, \
+            f"Wrong Main-Class in manifest: {manifest}"
+
+
+def test_package_deploy_jar_multiple_gen_class_names(rule_runner: RuleRunner) -> None:
+    """Test that multiple (:gen-class :name) declarations all get included."""
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/app/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_source(
+                    name="helper",
+                    source="helper.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="app.core",
+                    dependencies=[":core", ":helper"],
+                )
+                """
+            ),
+            "src/app/core.clj": dedent(
+                """\
+                (ns app.core
+                  (:require [app.helper])
+                  (:gen-class :name com.example.Main))
+
+                (defn -main [& args]
+                  (app.helper/help))
+                """
+            ),
+            "src/app/helper.clj": dedent(
+                """\
+                (ns app.helper
+                  (:gen-class :name com.example.Helper))
+
+                (defn help [] nil)
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/app", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    # Build and verify both custom classes are present
+    result = rule_runner.request(BuiltPackage, [field_set])
+
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_path = result.artifacts[0].relpath
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None
+
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        entries = set(jar.namelist())
+        assert 'com/example/Main.class' in entries, \
+            f"Main gen-class not found. Entries: {sorted(entries)}"
+        assert 'com/example/Helper.class' in entries, \
+            f"Helper gen-class not found. Entries: {sorted(entries)}"
+
+
+def test_package_deploy_jar_gen_class_without_name(rule_runner: RuleRunner) -> None:
+    """Test that standard (:gen-class) without :name works correctly."""
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/app/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="app.core",
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/app/core.clj": dedent(
+                """\
+                (ns app.core
+                  (:gen-class))
+
+                (defn -main [& args]
+                  (println "Hello"))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/app", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+    result = rule_runner.request(BuiltPackage, [field_set])
+
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_path = result.artifacts[0].relpath
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None
+
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        entries = set(jar.namelist())
+
+        # Standard gen-class generates namespace-named class
+        assert 'app/core.class' in entries, \
+            f"Standard gen-class class not found. Entries: {sorted(entries)}"
+        assert 'app/core__init.class' in entries
+
+        manifest = jar.read('META-INF/MANIFEST.MF').decode()
+        assert 'Main-Class: app.core' in manifest
 
 
 def test_package_deploy_jar_missing_main_namespace(rule_runner: RuleRunner) -> None:
