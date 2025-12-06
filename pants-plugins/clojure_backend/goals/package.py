@@ -45,7 +45,6 @@ from clojure_backend.provided_dependencies import (
     ResolveProvidedDependenciesRequest,
 )
 from clojure_backend.target_types import (
-    ClojureAOTNamespacesField,
     ClojureProvidedDependenciesField,
     ClojureMainNamespaceField,
     ClojureSourceField,
@@ -63,7 +62,6 @@ class ClojureDeployJarFieldSet(PackageFieldSet):
     )
 
     main: ClojureMainNamespaceField
-    aot: ClojureAOTNamespacesField
     provided: ClojureProvidedDependenciesField
     jdk: JvmJdkField
     resolve: JvmResolveField
@@ -78,23 +76,15 @@ async def package_clojure_deploy_jar(
     """Package a Clojure application into an executable JAR with AOT compilation.
 
     This rule:
-    1. Determines which namespaces to AOT compile based on the `aot` field
-    2. Performs AOT compilation using CompileClojureAOTRequest
-    3. Validates the main namespace has (:gen-class)
-    4. Delegates to deploy_jar for final packaging
+    1. AOT compiles the main namespace transitively (or skips AOT for clojure.main)
+    2. Validates the main namespace has (:gen-class) if AOT compiling
+    3. Packages all dependencies into a single executable JAR
     """
 
     main_namespace = field_set.main.value
-    aot_field = field_set.aot
 
-    # Validate aot field values - :none cannot be combined with other values
-    if ":none" in aot_field.value and len(aot_field.value) > 1:
-        raise ValueError(
-            f"':none' cannot be combined with other AOT values. "
-            f"Got: {aot_field.value}"
-        )
-
-    skip_aot = ":none" in aot_field.value
+    # Check for source-only mode (using clojure.main)
+    skip_aot = main_namespace == "clojure.main"
 
     # Get transitive targets to find all Clojure sources
     transitive_targets = await Get(
@@ -149,51 +139,45 @@ async def package_clojure_deploy_jar(
     logger.debug(f"First-party namespaces: {first_party_namespace_paths}")
 
     # Determine which namespaces to compile
-    namespaces_to_compile: tuple[str, ...]
-
     if skip_aot:
-        # No AOT compilation - source-only JAR
-        namespaces_to_compile = ()
-    elif ":all" in aot_field.value:
-        # Compile all Clojure namespaces in the project
-        namespaces_to_compile = tuple(sorted(set(namespace_analysis.namespaces.values())))
-    elif not aot_field.value:
-        # Default: compile just the main namespace (transitive)
-        namespaces_to_compile = (main_namespace,)
+        namespaces_to_compile: tuple[str, ...] = ()
     else:
-        # Explicit list of namespaces
-        namespaces_to_compile = tuple(aot_field.value)
-
-    # Find the source file for main namespace using the analysis result
-    # Build reverse mapping: namespace -> file path
-    namespace_to_file = {ns: path for path, ns in namespace_analysis.namespaces.items()}
-    main_source_path = namespace_to_file.get(main_namespace)
-    main_source_file = None
-
-    if main_source_path:
-        # Find the file content for the main source
-        for file_content in digest_contents:
-            if file_content.path == main_source_path:
-                main_source_file = file_content.content.decode("utf-8")
-                break
-
-    if not main_source_file:
-        raise ValueError(
-            f"Could not find source file for main namespace '{main_namespace}'.\n\n"
-            f"Common causes:\n"
-            f"  - Main namespace is not in the dependencies of this target\n"
-            f"  - Namespace name doesn't match the file path\n"
-            f"  - Missing (ns {main_namespace}) declaration in source file\n\n"
-            f"Troubleshooting:\n"
-            f"  1. Verify dependencies: pants dependencies {field_set.address}\n"
-            f"  2. Check file contains (ns {main_namespace}) declaration\n"
-            f"  3. Ensure the namespace follows Clojure naming conventions\n"
-        )
+        # Always compile just the main namespace - transitive compilation handles deps
+        namespaces_to_compile = (main_namespace,)
 
     # Only validate gen-class if we're doing AOT compilation
-    # Source-only JARs (skip_aot=True) don't need gen-class
-    main_class_name = main_namespace
-    if not skip_aot:
+    # Source-only JARs (main=clojure.main) don't need gen-class validation
+    if skip_aot:
+        # Source-only mode with clojure.main
+        main_class_name = "clojure.main"
+    else:
+        # Find the source file for main namespace using the analysis result
+        # Build reverse mapping: namespace -> file path
+        namespace_to_file = {ns: path for path, ns in namespace_analysis.namespaces.items()}
+        main_source_path = namespace_to_file.get(main_namespace)
+        main_source_file = None
+
+        if main_source_path:
+            # Find the file content for the main source
+            for file_content in digest_contents:
+                if file_content.path == main_source_path:
+                    main_source_file = file_content.content.decode("utf-8")
+                    break
+
+        if not main_source_file:
+            raise ValueError(
+                f"Could not find source file for main namespace '{main_namespace}'.\n\n"
+                f"Common causes:\n"
+                f"  - Main namespace is not in the dependencies of this target\n"
+                f"  - Namespace name doesn't match the file path\n"
+                f"  - Missing (ns {main_namespace}) declaration in source file\n\n"
+                f"Troubleshooting:\n"
+                f"  1. Verify dependencies: pants dependencies {field_set.address}\n"
+                f"  2. Check file contains (ns {main_namespace}) declaration\n"
+                f"  3. Ensure the namespace follows Clojure naming conventions\n"
+            )
+
+        main_class_name = main_namespace
         # Check for (:gen-class) in the namespace declaration
         # Use a more robust check that looks for gen-class in the ns form, not just anywhere
         # This regex looks for (ns ...) followed by gen-class before the closing paren
@@ -326,11 +310,10 @@ async def package_clojure_deploy_jar(
 
     # Create JAR manifest
     if skip_aot:
-        # Source-only JAR - not directly executable with java -jar
-        # Main-Namespace indicates the intended entry point for documentation
-        manifest_content = f"""\
+        # Source-only JAR using clojure.main as entry point
+        manifest_content = """\
 Manifest-Version: 1.0
-Main-Namespace: {main_namespace}
+Main-Class: clojure.main
 Created-By: Pants Build System
 X-Source-Only: true
 """
@@ -440,7 +423,12 @@ Created-By: Pants Build System
                     jar_bytes = io.BytesIO(file_content.content)
                     with zipfile.ZipFile(jar_bytes, 'r') as dep_jar:
                         for item in dep_jar.namelist():
+                            # Skip META-INF (includes signatures, manifests)
                             if item.startswith('META-INF/'):
+                                continue
+                            # Skip LICENSE files at root level (can conflict between deps)
+                            item_basename = os.path.basename(item).upper()
+                            if item_basename.startswith('LICENSE'):
                                 continue
                             if item in added_entries:
                                 continue  # Already added from another JAR

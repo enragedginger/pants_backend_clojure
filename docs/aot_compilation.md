@@ -4,147 +4,72 @@ This document explains how AOT (Ahead-of-Time) compilation works in the `clojure
 
 ## Overview
 
-When you create a `clojure_deploy_jar`, the plugin AOT-compiles your Clojure namespaces to produce an executable JAR. However, Clojure's `compile` function is inherently transitive - it compiles not just the namespace you specify, but ALL namespaces that it requires, including third-party libraries.
+When you create a `clojure_deploy_jar`, the main namespace is AOT compiled along with all namespaces it transitively requires. This produces an executable JAR that starts quickly without runtime compilation.
 
-This transitive compilation is a well-known behavior in the Clojure ecosystem, and all major build tools (tools.build, Leiningen, Boot, depstar) have mechanisms to handle it.
-
-## AOT Modes
-
-The `clojure_deploy_jar` target supports four AOT modes via the `aot` field:
-
-### Mode 1: No AOT (`:none`)
+## Basic Usage
 
 ```python
 clojure_deploy_jar(
-    name="app",
+    name="my-app",
     main="my.app.core",
-    aot=[":none"],
+    dependencies=[":lib"],
 )
 ```
 
-Creates a source-only JAR. All Clojure code is compiled at runtime when the application starts.
+The main namespace must include `(:gen-class)` and define a `-main` function:
+
+```clojure
+(ns my.app.core
+  (:gen-class))
+
+(defn -main [& args]
+  (println "Hello, World!"))
+```
 
 **Running the JAR:**
 ```bash
-# Source-only JARs are NOT directly executable
-# This will NOT work:
-java -jar app.jar  # ERROR: no main manifest attribute
-
-# Instead, run with:
-java -cp app.jar clojure.main -m my.app.core
+java -jar my-app.jar
 ```
 
-**Pros:**
-- No AOT-related issues (protocol identity, record equality, etc.)
-- Simpler build process
-- Works with all libraries regardless of their AOT compatibility
-- Smaller JAR size (no duplicate .class files)
+## Direct Linking
 
-**Cons:**
-- Slower startup (compilation happens at runtime, can be 10-30+ seconds)
-- Not directly executable with `java -jar`
+Compilation uses `:direct-linking true` for optimal performance. This:
+- Eliminates var dereferencing overhead at call sites
+- Produces faster startup times
+- Creates smaller class files
 
-**When to use:**
-- Libraries with known AOT issues
+**Trade-off**: With direct linking, runtime var redefinition won't affect already-compiled call sites. If you need dynamic redefinition (e.g., for REPL development patterns in production), mark vars with `^:redef`:
+
+```clojure
+(defn ^:redef my-configurable-fn []
+  ...)
+```
+
+## Source-Only Mode
+
+To avoid AOT compilation entirely, use `clojure.main` as your main namespace:
+
+```python
+clojure_deploy_jar(
+    name="my-app-source-only",
+    main="clojure.main",
+    dependencies=[":my-lib"],
+)
+```
+
+Then run your app by specifying the namespace at runtime:
+```bash
+java -jar my-app-source-only.jar -m my.actual.namespace
+```
+
+**When to use source-only mode:**
+- Libraries with known AOT compatibility issues
 - Development/testing where startup time is acceptable
-- Maximum compatibility needed
+- Maximum compatibility with dynamically-loaded code
 
-### Mode 2: AOT Main Only (default)
-
-```python
-clojure_deploy_jar(
-    name="app",
-    main="my.app.core",
-    # aot=() or omit entirely
-)
-```
-
-Compiles the main namespace and all its transitive dependencies.
-
-**Running the JAR:**
-```bash
-java -jar app.jar
-```
-
-**Pros:**
-- Fast startup for the main execution path
-- JAR is directly executable
-- Good balance of startup speed and compatibility
-
-**Cons:**
-- Transitively compiles third-party code (mitigated by our two-pass strategy)
-- Requires `(:gen-class)` in main namespace
-
-**When to use:**
-- Most applications (recommended default)
-- When you need `java -jar` execution
-
-### Mode 3: AOT All (`:all`)
-
-```python
-clojure_deploy_jar(
-    name="app",
-    main="my.app.core",
-    aot=[":all"],
-)
-```
-
-Compiles all project namespaces.
-
-**Pros:**
-- Fastest possible startup
-- All code paths pre-compiled
-
-**Cons:**
-- May cause protocol/record identity issues with some libraries
-- Larger build output
-
-**When to use:**
-- Performance-critical applications
-- When all dependencies are AOT-compatible
-- Batch processing jobs
-
-### Mode 4: AOT Specific Namespaces
-
-```python
-clojure_deploy_jar(
-    name="app",
-    main="my.app.core",
-    aot=["my.app.core", "my.app.critical"],
-)
-```
-
-Compiles only the specified namespaces.
-
-**Pros:**
-- Fine-grained control over what gets compiled
-- Can target hot code paths
-
-**Cons:**
-- Requires manual namespace management
-- Namespace dependencies may pull in more than expected (transitive compilation)
-
-**When to use:**
-- When you need specific namespaces compiled but want to avoid full `:all`
-- Performance tuning specific paths
-
-## Comparison with Leiningen
-
-| Feature | Leiningen | Pants Clojure |
-|---------|-----------|---------------|
-| No AOT | Default (omit `:aot`) | `aot=[":none"]` |
-| AOT main only | `:aot [main.ns]` | Default (omit `aot`) |
-| AOT all | `:aot :all` | `aot=[":all"]` |
-| AOT specific | `:aot [ns1 ns2]` | `aot=["ns1", "ns2"]` |
-
-**Why different defaults?**
-
-Leiningen defaults to no AOT because it prioritizes compatibility and follows a more traditional Clojure development workflow.
-
-Pants defaults to AOT main because:
-- Most users expect `java -jar` to work out of the box
-- Faster startup is typically desired for deployed applications
-- Users can explicitly opt out with `:none`
+**Trade-offs:**
+- Slower startup (10-30+ seconds for compilation at runtime)
+- Must remember the `-m namespace` invocation
 
 ## How It Works
 
@@ -172,39 +97,32 @@ java.lang.IllegalArgumentException: No implementation of method: :spec of protoc
 #'rpl.schema.core/Schema found for class: rpl.rama.util.schema.Volatile
 ```
 
-### Our Solution: AOT First, JAR Override
+### Our Solution: First-Party AOT Only
 
-The `clojure_deploy_jar` packaging rule uses a two-pass approach:
+The `clojure_deploy_jar` packaging rule uses a targeted approach:
 
-1. **First pass: Add all AOT-compiled classes**
-   - All classes from AOT compilation are added to the JAR (project + third-party transitives)
-   - This ensures source-only libraries (libraries that ship without pre-compiled .class files) work correctly
+1. **First pass: Add only first-party AOT-compiled classes**
+   - Classes from AOT compilation are filtered by namespace
+   - Only classes belonging to your project's namespaces (from `clojure_source` targets) are added
+   - Third-party classes from AOT are discarded
 
-2. **Second pass: Extract dependency JARs, overriding existing entries**
-   - Dependency JAR contents are extracted into the uberjar
-   - When a JAR contains a class that was already added from AOT, the JAR version wins
-   - This ensures pre-compiled libraries use their original classes (protocol safety)
+2. **Second pass: Extract dependency JARs**
+   - All dependency JAR contents are extracted into the uberjar
+   - Third-party classes come from the original JARs (correct protocol identity)
+   - Source-only libraries have their source files included
 
 ### Why This Works
 
 | Scenario | AOT Classes | JAR Contents | Result |
 |----------|-------------|--------------|--------|
-| Pre-compiled library | `lib/Protocol.class` (wrong identity) | `lib/Protocol.class` (correct) | JAR overwrites → CORRECT |
-| Source-only library | `lib/SourceOnly.class` | `lib/source_only.clj` (no class) | AOT class kept → CORRECT |
-| Partial library | `lib/A.class`, `lib/B.class` | `lib/A.class`, `lib/b.clj` | JAR overwrites A, AOT B kept → CORRECT |
+| Pre-compiled library | Discarded | `lib/Protocol.class` (correct) | JAR provides correct classes |
+| Source-only library | Discarded | `lib/source_only.clj` | Source included for runtime compilation |
+| First-party code | Included | N/A | Project classes from AOT |
 
-This approach aligns with the standard behavior in the Clojure ecosystem where "last write wins" during JAR packaging.
-
-## Source-Only Libraries
-
-Many Clojure libraries are distributed as source-only (containing only `.clj` files, no pre-compiled `.class` files). The AOT-first approach ensures these libraries work correctly:
-
-1. During AOT compilation, these libraries are transitively compiled
-2. Their `.class` files are added to the uberjar in the first pass
-3. When extracting their JARs, only source files are present (no conflict)
-4. At runtime, the JVM uses the compiled `.class` files
-
-Without the AOT-first approach, source-only libraries would fail at runtime with `ClassNotFoundException` because their required classes wouldn't be present.
+This approach ensures that:
+- First-party code gets the performance benefits of AOT compilation
+- Third-party libraries use their original packaged classes (protocol safety)
+- Source-only libraries work correctly at runtime
 
 ## Troubleshooting
 
@@ -216,11 +134,12 @@ java.lang.IllegalArgumentException: No implementation of method: :foo of protoco
 #'some.lib/Protocol found for class: some.lib.SomeRecord
 ```
 
-This typically indicates a protocol/class identity mismatch. The AOT-first, JAR-override approach should resolve this issue. If you still see this error:
+This typically indicates a protocol/class identity mismatch. The first-party-only AOT approach should resolve this issue. If you still see this error:
 
 1. Ensure you're using the latest version of pants-backend-clojure
 2. Check if the library has any special packaging requirements
-3. Try marking the problematic library as `provided` if it should be supplied at runtime
+3. Try using source-only mode: `main="clojure.main"`
+4. Try marking the problematic library as `provided` if it should be supplied at runtime
 
 ### Verifying JAR Contents
 
@@ -228,27 +147,26 @@ To inspect what classes are in your JAR:
 
 ```bash
 # List all classes
-jar tf target/my-app.jar | grep '\.class$'
+jar tf dist/my-app.jar | grep '\.class$'
 
-# Check for specific third-party classes
-jar tf target/my-app.jar | grep 'clojure/core'
+# Check for first-party classes
+jar tf dist/my-app.jar | grep '^myapp/'
+
+# Check for third-party classes (should be from JARs)
+jar tf dist/my-app.jar | grep '^clojure/core'
 ```
-
-Third-party classes like `clojure/core.class` should be present (from the Clojure JAR, which overwrites the AOT version).
 
 ### Debug Logging
 
-To see which AOT classes are being overridden by JAR contents, run Pants with debug logging:
+To see packaging details, run Pants with debug logging:
 
 ```bash
 pants --level=debug package //path/to:my_deploy_jar
 ```
 
-You'll see messages like:
-```
-JAR class overrides AOT: clojure/core$fn__123.class
-Dependency JARs overrode 1234 AOT-compiled classes for //path/to:my_deploy_jar
-```
+You'll see messages about:
+- How many first-party classes were included from AOT
+- How many third-party classes were skipped
 
 ## Provided Dependencies
 
@@ -259,19 +177,21 @@ When using `provided` dependencies (dependencies available at runtime but not bu
 
 See [Provided Dependencies](./provided_dependencies.md) for more information.
 
-## Comparison with Other Build Tools
+## Migration Guide
 
-| Tool | Approach |
-|------|----------|
-| **pants-backend-clojure** | AOT first, JAR override (last write wins) |
-| **tools.build** | Uses `:filter-nses` to exclude third-party AOT |
-| **Leiningen** | Uses `:clean-non-project-classes` option |
-| **depstar** | JAR contents merged, last wins |
+### From Old API (with `aot` field)
 
-Our approach aligns with the ecosystem standard where dependency JARs are processed after AOT classes, ensuring pre-compiled library classes are used.
+If you were using the old `aot` field, here's how to migrate:
+
+| Old Mode | New Equivalent | Notes |
+|----------|----------------|-------|
+| `aot=()` (default) | Just specify `main` | Unchanged behavior |
+| `aot=[":none"]` | `main="clojure.main"` | Run with `java -jar app.jar -m namespace` |
+| `aot=[":all"]` | Just specify `main` | Transitive compilation covers needed namespaces |
+| `aot=["ns1", "ns2"]` | Just specify `main` | If ns1/ns2 are required by main, they'll be compiled |
 
 ## References
 
 - [Clojure - Ahead-of-time Compilation](https://clojure.org/reference/compilation)
-- [tools.build compile-clj documentation](https://clojure.github.io/tools.build/clojure.tools.build.api.html#var-compile-clj)
-- [Leiningen Issue #679](https://github.com/technomancy/leiningen/issues/679) - Protocol reload semantics with AOT
+- [Direct Linking in Clojure](https://clojure.org/reference/compilation#directlinking)
+- [tools.build documentation](https://clojure.org/guides/tools_build)

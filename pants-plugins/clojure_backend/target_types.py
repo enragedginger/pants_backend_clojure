@@ -230,29 +230,19 @@ class ClojureMainNamespaceField(StringField):
     alias = "main"
     required = True
     help = (
-        "Main namespace with -main function and (:gen-class) in its ns declaration. "
-        "Example: 'my.app.core'. This namespace will be AOT compiled and used as the "
-        "entry point for the executable JAR."
+        "Main namespace for the executable JAR. This namespace will be AOT compiled "
+        "along with all namespaces it transitively requires.\n\n"
+        "The namespace must include (:gen-class) in its ns declaration and define "
+        "a -main function.\n\n"
+        "Example:\n"
+        "  (ns my.app.core\n"
+        "    (:gen-class))\n"
+        "  (defn -main [& args]\n"
+        "    (println \"Hello, World!\"))\n\n"
+        "To avoid AOT compilation entirely (source-only JAR), use 'clojure.main' "
+        "as the main namespace and invoke your app namespace at runtime:\n"
+        "  java -jar app.jar -m my.actual.namespace"
     )
-
-
-class ClojureAOTNamespacesField(StringSequenceField):
-    alias = "aot"
-    help = (
-        "Namespaces to AOT compile. Options:\n"
-        "- [':none']: No AOT compilation (source-only JAR, not directly executable)\n"
-        "- Empty (default): Compile only main namespace (transitive)\n"
-        "- [':all']: Compile all project namespaces from dependencies\n"
-        "- ['ns1', 'ns2']: Compile specific namespaces\n\n"
-        "Note: AOT compilation is transitive - compiling a namespace will "
-        "automatically compile all namespaces it requires.\n\n"
-        "The ':none' mode creates a source-only JAR that defers all compilation "
-        "to runtime. This avoids AOT-related issues but:\n"
-        "- Results in slower startup (compilation happens at runtime)\n"
-        "- JAR is not directly executable with 'java -jar'\n"
-        "- Run with: java -cp app.jar clojure.main -m my.app.core"
-    )
-    default = ()  # Empty = main namespace only (transitive)
 
 
 class ClojureProvidedDependenciesField(SpecialCasedDependencies):
@@ -291,7 +281,6 @@ class ClojureDeployJarTarget(Target):
         *COMMON_TARGET_FIELDS,
         JvmDependenciesField,
         ClojureMainNamespaceField,
-        ClojureAOTNamespacesField,
         ClojureProvidedDependenciesField,
         JvmResolveField,
         JvmJdkField,
@@ -299,11 +288,13 @@ class ClojureDeployJarTarget(Target):
     )
     help = (
         "A Clojure application packaged as an executable JAR (uberjar).\n\n"
-        "The main namespace will be AOT compiled along with its dependencies, "
-        "and packaged with all transitive dependencies into a single JAR file "
-        "that can be executed with `java -jar`.\n\n"
+        "The main namespace will be AOT compiled along with all its transitive "
+        "dependencies, using direct linking for optimal performance. All dependencies "
+        "are packaged into a single JAR file that can be executed with `java -jar`.\n\n"
         "The main namespace must include (:gen-class) in its ns declaration and "
-        "define a -main function."
+        "define a -main function.\n\n"
+        "To create a source-only JAR (no AOT compilation), use 'clojure.main' as the "
+        "main namespace."
     )
 
 

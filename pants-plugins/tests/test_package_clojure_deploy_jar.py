@@ -16,7 +16,6 @@ from clojure_backend.goals.package import (
 )
 from clojure_backend.goals.package import rules as package_rules
 from clojure_backend.target_types import (
-    ClojureAOTNamespacesField,
     ClojureProvidedDependenciesField,
     ClojureDeployJarTarget,
     ClojureMainNamespaceField,
@@ -180,128 +179,9 @@ def test_package_deploy_jar_validates_gen_class(rule_runner: RuleRunner) -> None
     assert "gen-class" in str(wrapped_exc)
 
 
-def test_package_deploy_jar_with_aot_all(rule_runner: RuleRunner) -> None:
-    """Test packaging with aot=':all' compiles all namespaces."""
-    setup_rule_runner(rule_runner)
-    rule_runner.write_files(
-        {
-            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
-            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
-            "src/app/BUILD": dedent(
-                """\
-                clojure_source(
-                    name="core",
-                    source="core.clj",
-                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
-                )
-                clojure_source(
-                    name="util",
-                    source="util.clj",
-                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
-                )
-
-                clojure_deploy_jar(
-                    name="app",
-                    main="app.core",
-                    aot=[":all"],
-                    dependencies=[":core", ":util"],
-                )
-                """
-            ),
-            "src/app/core.clj": dedent(
-                """\
-                (ns app.core
-                  (:require [app.util])
-                  (:gen-class))
-
-                (defn -main [& args]
-                  (println "App"))
-                """
-            ),
-            "src/app/util.clj": dedent(
-                """\
-                (ns app.util)
-
-                (defn helper []
-                  "helper")
-                """
-            ),
-        }
-    )
-
-    target = rule_runner.get_target(Address("src/app", target_name="app"))
-    field_set = ClojureDeployJarFieldSet.create(target)
-
-    result = rule_runner.request(BuiltPackage, [field_set])
-
-    # Should produce a JAR
-    assert len(result.artifacts) == 1
-
-
-def test_package_deploy_jar_with_selective_aot(rule_runner: RuleRunner) -> None:
-    """Test packaging with selective AOT compilation."""
-    setup_rule_runner(rule_runner)
-    rule_runner.write_files(
-        {
-            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
-            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
-            "src/myapp/BUILD": dedent(
-                """\
-                clojure_source(
-                    name="core",
-                    source="core.clj",
-                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
-                )
-                clojure_source(
-                    name="config",
-                    source="config.clj",
-                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
-                )
-
-                clojure_deploy_jar(
-                    name="app",
-                    main="myapp.core",
-                    aot=["myapp.core", "myapp.config"],
-                    dependencies=[":core", ":config"],
-                )
-                """
-            ),
-            "src/myapp/core.clj": dedent(
-                """\
-                (ns myapp.core
-                  (:gen-class))
-
-                (defn -main [& args]
-                  (println "MyApp"))
-                """
-            ),
-            "src/myapp/config.clj": dedent(
-                """\
-                (ns myapp.config)
-
-                (def config {:port 8080})
-                """
-            ),
-        }
-    )
-
-    target = rule_runner.get_target(Address("src/myapp", target_name="app"))
-    field_set = ClojureDeployJarFieldSet.create(target)
-
-    result = rule_runner.request(BuiltPackage, [field_set])
-
-    # Should produce a JAR
-    assert len(result.artifacts) == 1
-
-
 def test_clojure_main_namespace_field_required() -> None:
     """Test that ClojureMainNamespaceField is required."""
     assert ClojureMainNamespaceField.required is True
-
-
-def test_clojure_aot_namespaces_field_default() -> None:
-    """Test that ClojureAOTNamespacesField has empty default."""
-    assert ClojureAOTNamespacesField.default == ()
 
 
 def test_clojure_deploy_jar_target_has_required_fields() -> None:
@@ -309,10 +189,11 @@ def test_clojure_deploy_jar_target_has_required_fields() -> None:
     # Check that main field is in core_fields
     field_aliases = {field.alias for field in ClojureDeployJarTarget.core_fields}
     assert "main" in field_aliases
-    assert "aot" in field_aliases
     assert "dependencies" in field_aliases
     assert "provided" in field_aliases
     assert "resolve" in field_aliases
+    # aot field should NOT be present (removed in simplification)
+    assert "aot" not in field_aliases
 
 
 def test_package_deploy_jar_with_custom_gen_class_name(rule_runner: RuleRunner) -> None:
@@ -1664,12 +1545,12 @@ def test_hyphenated_namespace_classes_included(rule_runner: RuleRunner) -> None:
 
 
 # =============================================================================
-# Tests for AOT :none mode (source-only JARs)
+# Tests for source-only JARs (main="clojure.main")
 # =============================================================================
 
 
-def test_package_deploy_jar_with_aot_none(rule_runner: RuleRunner) -> None:
-    """Test packaging with aot=':none' creates source-only JAR."""
+def test_package_deploy_jar_clojure_main_source_only(rule_runner: RuleRunner) -> None:
+    """Test that main='clojure.main' creates a source-only JAR."""
     import io
     import zipfile
 
@@ -1688,13 +1569,12 @@ def test_package_deploy_jar_with_aot_none(rule_runner: RuleRunner) -> None:
 
                 clojure_deploy_jar(
                     name="app",
-                    main="app.core",
-                    aot=[":none"],
+                    main="clojure.main",  # Source-only mode
                     dependencies=[":core"],
                 )
                 """
             ),
-            # Note: no (:gen-class) - not required for :none
+            # No (:gen-class) needed since we're not AOT compiling app code
             "src/app/core.clj": dedent(
                 """\
                 (ns app.core)
@@ -1745,16 +1625,16 @@ def test_package_deploy_jar_with_aot_none(rule_runner: RuleRunner) -> None:
         assert any('clojure/core' in e for e in entries), \
             "Clojure runtime not found in JAR"
 
-        # Check manifest
+        # Check manifest - should have Main-Class: clojure.main
         manifest = jar.read('META-INF/MANIFEST.MF').decode()
         assert 'X-Source-Only: true' in manifest, \
             f"Expected X-Source-Only manifest attribute, got: {manifest}"
-        assert 'Main-Namespace: app.core' in manifest, \
-            f"Expected Main-Namespace manifest attribute, got: {manifest}"
+        assert 'Main-Class: clojure.main' in manifest, \
+            f"Expected Main-Class: clojure.main manifest attribute, got: {manifest}"
 
 
-def test_package_deploy_jar_aot_none_no_gen_class_required(rule_runner: RuleRunner) -> None:
-    """Test that :none mode doesn't require (:gen-class)."""
+def test_package_deploy_jar_clojure_main_no_gen_class_required(rule_runner: RuleRunner) -> None:
+    """Test that clojure.main mode doesn't require (:gen-class)."""
     setup_rule_runner(rule_runner)
     rule_runner.write_files(
         {
@@ -1770,13 +1650,12 @@ def test_package_deploy_jar_aot_none_no_gen_class_required(rule_runner: RuleRunn
 
                 clojure_deploy_jar(
                     name="app",
-                    main="app.core",
-                    aot=[":none"],
+                    main="clojure.main",  # Source-only mode
                     dependencies=[":core"],
                 )
                 """
             ),
-            # Note: NO (:gen-class) in ns declaration
+            # Note: NO (:gen-class) in ns declaration - not required for clojure.main
             "src/app/core.clj": dedent(
                 """\
                 (ns app.core)
@@ -1796,57 +1675,8 @@ def test_package_deploy_jar_aot_none_no_gen_class_required(rule_runner: RuleRunn
     assert len(result.artifacts) == 1
 
 
-def test_package_deploy_jar_aot_none_cannot_combine(rule_runner: RuleRunner) -> None:
-    """Test that :none cannot be combined with other AOT values."""
-    setup_rule_runner(rule_runner)
-    rule_runner.write_files(
-        {
-            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
-            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
-            "src/app/BUILD": dedent(
-                """\
-                clojure_source(
-                    name="core",
-                    source="core.clj",
-                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
-                )
-
-                clojure_deploy_jar(
-                    name="app",
-                    main="app.core",
-                    aot=[":none", ":all"],
-                    dependencies=[":core"],
-                )
-                """
-            ),
-            "src/app/core.clj": dedent(
-                """\
-                (ns app.core
-                  (:gen-class))
-
-                (defn -main [& args]
-                  (println "Hi"))
-                """
-            ),
-        }
-    )
-
-    target = rule_runner.get_target(Address("src/app", target_name="app"))
-    field_set = ClojureDeployJarFieldSet.create(target)
-
-    # Should raise an error about invalid combination
-    with pytest.raises(ExecutionError) as exc_info:
-        rule_runner.request(BuiltPackage, [field_set])
-
-    # Verify the wrapped exception is a ValueError with the right message
-    assert len(exc_info.value.wrapped_exceptions) == 1
-    wrapped_exc = exc_info.value.wrapped_exceptions[0]
-    assert isinstance(wrapped_exc, ValueError)
-    assert "':none' cannot be combined" in str(wrapped_exc)
-
-
-def test_package_deploy_jar_aot_none_includes_cljc(rule_runner: RuleRunner) -> None:
-    """Test that :none mode includes .cljc files."""
+def test_package_deploy_jar_clojure_main_includes_cljc(rule_runner: RuleRunner) -> None:
+    """Test that clojure.main mode includes .cljc files."""
     import io
     import zipfile
 
@@ -1871,8 +1701,7 @@ def test_package_deploy_jar_aot_none_includes_cljc(rule_runner: RuleRunner) -> N
 
                 clojure_deploy_jar(
                     name="app",
-                    main="app.core",
-                    aot=[":none"],
+                    main="clojure.main",  # Source-only mode
                     dependencies=[":core"],
                 )
                 """
@@ -1925,8 +1754,8 @@ def test_package_deploy_jar_aot_none_includes_cljc(rule_runner: RuleRunner) -> N
             f"Expected app/util.cljc in JAR, found: {entries}"
 
 
-def test_package_deploy_jar_aot_none_with_transitive_deps(rule_runner: RuleRunner) -> None:
-    """Test that :none mode includes transitive first-party dependencies as source."""
+def test_package_deploy_jar_clojure_main_with_transitive_deps(rule_runner: RuleRunner) -> None:
+    """Test that clojure.main mode includes transitive first-party dependencies as source."""
     import io
     import zipfile
 
@@ -1964,8 +1793,7 @@ def test_package_deploy_jar_aot_none_with_transitive_deps(rule_runner: RuleRunne
 
                 clojure_deploy_jar(
                     name="app",
-                    main="myapp.core",
-                    aot=[":none"],
+                    main="clojure.main",  # Source-only mode
                     dependencies=[":core"],
                 )
                 """

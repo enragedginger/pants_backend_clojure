@@ -109,8 +109,9 @@ async def aot_compile_clojure(
   ;; Create classes directory if it doesn't exist
   (.mkdirs (java.io.File. "{classes_dir}"))
 
-  ;; Compile namespaces
-  (binding [*compile-path* "{classes_dir}"]
+  ;; Compile namespaces with direct linking enabled for optimal performance
+  (binding [*compile-path* "{classes_dir}"
+            *compiler-options* {{:direct-linking true}}]
     {compile_statements}))
 """
 

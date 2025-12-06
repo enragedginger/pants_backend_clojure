@@ -5,7 +5,6 @@ from textwrap import dedent
 import pytest
 
 from clojure_backend.target_types import (
-    ClojureAOTNamespacesField,
     ClojureDeployJarTarget,
     ClojureMainNamespaceField,
     ClojureSourceField,
@@ -389,12 +388,6 @@ def test_clojure_deploy_jar_main_field_required() -> None:
     assert ClojureMainNamespaceField.alias == "main"
 
 
-def test_clojure_deploy_jar_aot_field_default() -> None:
-    """Test that the aot field has an empty default."""
-    assert ClojureAOTNamespacesField.default == ()
-    assert ClojureAOTNamespacesField.alias == "aot"
-
-
 def test_clojure_deploy_jar_target_type_alias() -> None:
     """Test that clojure_deploy_jar has the correct alias."""
     assert ClojureDeployJarTarget.alias == "clojure_deploy_jar"
@@ -406,11 +399,13 @@ def test_clojure_deploy_jar_has_required_fields() -> None:
 
     # Core fields that should be present
     assert "main" in field_aliases
-    assert "aot" in field_aliases
     assert "dependencies" in field_aliases
     assert "resolve" in field_aliases
     assert "jdk" in field_aliases
     assert "output_path" in field_aliases
+    assert "provided" in field_aliases
+    # aot field should NOT be present (removed in simplification)
+    assert "aot" not in field_aliases
 
 
 def test_clojure_deploy_jar_with_minimal_config(rule_runner: RuleRunner) -> None:
@@ -445,75 +440,6 @@ def test_clojure_deploy_jar_with_minimal_config(rule_runner: RuleRunner) -> None
 
     # Check main field
     assert target[ClojureMainNamespaceField].value == "my.app.core"
-
-    # Check aot field uses default (empty)
-    assert target[ClojureAOTNamespacesField].value == ()
-
-
-def test_clojure_deploy_jar_with_aot_all(rule_runner: RuleRunner) -> None:
-    """Test creating a clojure_deploy_jar with aot=':all'."""
-    rule_runner.write_files(
-        {
-            "src/BUILD": dedent(
-                """\
-                clojure_source(name="core", source="core.clj")
-
-                clojure_deploy_jar(
-                    name="app",
-                    main="my.app.core",
-                    aot=[":all"],
-                    dependencies=[":core"],
-                )
-                """
-            ),
-            "src/core.clj": "(ns my.app.core (:gen-class))",
-        }
-    )
-    rule_runner.set_options(
-        [
-            f"--jvm-resolves={repr(_JVM_RESOLVES)}",
-            "--jvm-default-resolve=jvm-default",
-        ]
-    )
-
-    target = rule_runner.get_target(Address("src", target_name="app"))
-
-    # Check aot field
-    assert ":all" in target[ClojureAOTNamespacesField].value
-
-
-def test_clojure_deploy_jar_with_selective_aot(rule_runner: RuleRunner) -> None:
-    """Test creating a clojure_deploy_jar with selective AOT compilation."""
-    rule_runner.write_files(
-        {
-            "src/BUILD": dedent(
-                """\
-                clojure_source(name="core", source="core.clj")
-
-                clojure_deploy_jar(
-                    name="app",
-                    main="my.app.core",
-                    aot=["my.app.core", "my.app.util"],
-                    dependencies=[":core"],
-                )
-                """
-            ),
-            "src/core.clj": "(ns my.app.core (:gen-class))",
-        }
-    )
-    rule_runner.set_options(
-        [
-            f"--jvm-resolves={repr(_JVM_RESOLVES)}",
-            "--jvm-default-resolve=jvm-default",
-        ]
-    )
-
-    target = rule_runner.get_target(Address("src", target_name="app"))
-
-    # Check aot field has the specific namespaces
-    aot_namespaces = target[ClojureAOTNamespacesField].value
-    assert "my.app.core" in aot_namespaces
-    assert "my.app.util" in aot_namespaces
 
 
 def test_clojure_deploy_jar_with_resolve(rule_runner: RuleRunner) -> None:
