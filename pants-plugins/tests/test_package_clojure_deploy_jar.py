@@ -484,6 +484,89 @@ def test_package_deploy_jar_gen_class_name_after_other_options(rule_runner: Rule
         assert 'Main-Class: com.example.ComplexApp' in manifest
 
 
+def test_package_deploy_jar_with_defrecord_deftype(rule_runner: RuleRunner) -> None:
+    """Test that defrecord/deftype/defprotocol classes are included in JAR.
+
+    These generate classes in subdirectories (e.g., my/app/core/MyRecord.class)
+    rather than using the $ convention for inner classes.
+    """
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/app/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="app.core",
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/app/core.clj": dedent(
+                """\
+                (ns app.core
+                  (:gen-class))
+
+                (defrecord MyRecord [field1 field2])
+
+                (deftype MyType [state])
+
+                (defprotocol MyProtocol
+                  (do-something [this]))
+
+                (defn -main [& args]
+                  (println (->MyRecord 1 2)))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/app", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+    result = rule_runner.request(BuiltPackage, [field_set])
+
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_path = result.artifacts[0].relpath
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None
+
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        entries = set(jar.namelist())
+
+        # Namespace init class
+        assert 'app/core__init.class' in entries, \
+            f"Namespace init class not found. Entries: {sorted(e for e in entries if e.startswith('app/'))}"
+
+        # defrecord generates class in subdirectory
+        assert 'app/core/MyRecord.class' in entries, \
+            f"defrecord class not found. Entries: {sorted(e for e in entries if e.startswith('app/'))}"
+
+        # deftype generates class in subdirectory
+        assert 'app/core/MyType.class' in entries, \
+            f"deftype class not found. Entries: {sorted(e for e in entries if e.startswith('app/'))}"
+
+        # defprotocol generates interface in subdirectory
+        assert 'app/core/MyProtocol.class' in entries, \
+            f"defprotocol class not found. Entries: {sorted(e for e in entries if e.startswith('app/'))}"
+
+
 def test_package_deploy_jar_missing_main_namespace(rule_runner: RuleRunner) -> None:
     """Test that packaging fails if main namespace source is not found."""
     setup_rule_runner(rule_runner)

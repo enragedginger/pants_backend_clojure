@@ -318,7 +318,12 @@ async def package_clojure_deploy_jar(
         base_class_path = class_path.split('$')[0]
         if base_class_path.endswith('__init'):
             base_class_path = base_class_path[:-6]  # len('__init') == 6
-        return base_class_path in provided_namespace_paths
+        # Check if class path matches or is a child of a provided namespace path
+        # This handles defrecord/deftype/defprotocol which create subdirectories
+        for ns_path in provided_namespace_paths:
+            if base_class_path == ns_path or base_class_path.startswith(ns_path + '/'):
+                return True
+        return False
 
     def is_first_party_class(arcname: str) -> bool:
         """Check if a class file belongs to a first-party namespace or gen-class."""
@@ -326,13 +331,21 @@ async def package_clojure_deploy_jar(
             return True  # Fallback: include all if no analysis available
 
         class_path = arcname[:-6]  # Remove .class
-        base_class_path = class_path.split('$')[0]  # Handle inner classes
+        base_class_path = class_path.split('$')[0]  # Handle inner classes (fn, reify)
         if base_class_path.endswith('__init'):
             base_class_path = base_class_path[:-6]
 
-        # Check namespace paths (handles init, fn, record, protocol classes)
-        if base_class_path in first_party_namespace_paths:
-            return True
+        # Check if class path matches or is a child of a namespace path
+        # This handles:
+        #   - my/app/core__init.class (namespace init)
+        #   - my/app/core.class (gen-class without :name)
+        #   - my/app/core$fn__123.class (anonymous functions)
+        #   - my/app/core/MyRecord.class (defrecord - creates subdirectory)
+        #   - my/app/core/MyType.class (deftype - creates subdirectory)
+        #   - my/app/core/MyProtocol.class (defprotocol - creates subdirectory)
+        for ns_path in first_party_namespace_paths:
+            if base_class_path == ns_path or base_class_path.startswith(ns_path + '/'):
+                return True
 
         # Check gen-class :name paths (exact match for custom named classes)
         # Note: gen-class :name classes don't have inner classes or __init suffix
