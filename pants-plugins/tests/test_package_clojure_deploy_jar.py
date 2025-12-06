@@ -411,6 +411,79 @@ def test_package_deploy_jar_gen_class_without_name(rule_runner: RuleRunner) -> N
         assert 'Main-Class: app.core' in manifest
 
 
+def test_package_deploy_jar_gen_class_name_after_other_options(rule_runner: RuleRunner) -> None:
+    """Test that :name is detected even when it appears after other gen-class options."""
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/app/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="app.core",
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/app/core.clj": dedent(
+                """\
+                (ns app.core
+                  (:gen-class
+                    :init init
+                    :state state
+                    :name com.example.ComplexApp
+                    :methods [[getValue [] String]]))
+
+                (defn -init []
+                  [[] (atom "hello")])
+
+                (defn -getValue [this]
+                  @(.state this))
+
+                (defn -main [& args]
+                  (println "Complex gen-class"))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/app", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+    result = rule_runner.request(BuiltPackage, [field_set])
+
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_path = result.artifacts[0].relpath
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None
+
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        entries = set(jar.namelist())
+
+        # Custom gen-class with :name after other options should be detected
+        assert 'com/example/ComplexApp.class' in entries, \
+            f"Complex gen-class class not found. Entries: {sorted(entries)}"
+
+        manifest = jar.read('META-INF/MANIFEST.MF').decode()
+        assert 'Main-Class: com.example.ComplexApp' in manifest
+
+
 def test_package_deploy_jar_missing_main_namespace(rule_runner: RuleRunner) -> None:
     """Test that packaging fails if main namespace source is not found."""
     setup_rule_runner(rule_runner)

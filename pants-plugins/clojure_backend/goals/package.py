@@ -144,9 +144,10 @@ async def package_clojure_deploy_jar(
 
     for file_content in digest_contents:
         source_content = file_content.content.decode("utf-8")
-        # Look for (:gen-class :name X) pattern
+        # Look for (:gen-class ... :name X) pattern
+        # The pattern handles :name appearing anywhere within the gen-class form
         gen_class_name_match = re.search(
-            r'\(:gen-class\s+:name\s+([a-zA-Z][\w.]*)',
+            r'\(:gen-class\s+(?:[^)]*?\s)?:name\s+([a-zA-Z][\w.]*)',
             source_content,
             re.DOTALL,
         )
@@ -220,9 +221,10 @@ async def package_clojure_deploy_jar(
             )
 
         # Get the main class name from the gen-class declaration
-        # Look for (:gen-class :name CustomClassName)
+        # Look for (:gen-class ... :name CustomClassName)
+        # The pattern handles :name appearing anywhere within the gen-class form
         gen_class_name_match = re.search(
-            r'\(:gen-class\s+:name\s+([a-zA-Z][\w.]*)',
+            r'\(:gen-class\s+(?:[^)]*?\s)?:name\s+([a-zA-Z][\w.]*)',
             main_source_file,
             re.DOTALL,
         )

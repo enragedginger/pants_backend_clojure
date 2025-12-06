@@ -49,7 +49,24 @@ Leiningen builds uberjars in two steps:
 └─────────────────────────────────────────────────────┘
 ```
 
-**Key behavior**: Third-party AOT output is implicitly discarded because only `:compile-path` goes into the project JAR. Third-party classes come from their original JARs.
+**Key behavior**: By default, Leiningen includes **all** AOT output in the project JAR - it does NOT filter first-party vs third-party classes. Third-party AOT classes are only discarded because the dependency JARs are merged afterward, and the merge order means JAR contents overwrite AOT output.
+
+**Optional filtering**: Leiningen has a `:clean-non-project-classes` option (off by default) that deletes non-project classes after AOT compilation. However, this filtering uses **directory structure matching**, not source analysis:
+
+```clojure
+;; From compile.clj - checks if package directory exists in source-paths
+(defn- package-in-project?
+  [found-path compile-path source-path]
+  (.isDirectory (io/file (.replace found-path compile-path source-path))))
+```
+
+**Important limitation**: This approach breaks for custom `(:gen-class :name)` declarations. If you have:
+
+```clojure
+(ns my.app (:gen-class :name com.example.CustomMain))
+```
+
+And `:clean-non-project-classes` is enabled, Leiningen checks if `com/example/` exists in your source paths. If it doesn't (because your namespace is `my.app`, not `com.example`), **the class gets incorrectly deleted**.
 
 ### tools.build
 
@@ -92,6 +109,20 @@ Our plugin takes a more conservative approach:
 
 **Key behavior**: We explicitly discard third-party AOT classes and always use JAR contents. This guarantees protocol identity consistency.
 
+**First-party detection**: Unlike Leiningen's directory-based approach, we use **source analysis** to determine first-party classes:
+
+1. **Namespace paths**: Classes matching namespaces from `clojure_source` targets (e.g., `my/app/core__init.class`)
+2. **gen-class :name detection**: We parse source files for `(:gen-class :name X)` patterns and include those custom-named classes
+
+This means custom gen-class names work correctly:
+
+```clojure
+(ns my.app
+  (:gen-class :name com.example.CustomMain))  ; Correctly included!
+```
+
+The class `com/example/CustomMain.class` is included even though `com.example` doesn't exist as a source directory.
+
 ## Comparison Table
 
 | Aspect | Leiningen | tools.build | pants-clojure |
@@ -102,6 +133,8 @@ Our plugin takes a more conservative approach:
 | Third-party AOT classes | Implicitly discarded | Kept (may override JARs) | Explicitly discarded |
 | Protocol safety | Safe | Depends on config | Safe by default |
 | Conflict resolution | Last wins (JAR merge order) | Configurable strategies | First-party AOT, then JARs |
+| First-party detection | Directory structure | N/A (includes all) | Source analysis |
+| Custom gen-class :name | Broken if filtering enabled | Works (no filtering) | Works (source analysis) |
 
 ## Why Our Approach is Safer
 
