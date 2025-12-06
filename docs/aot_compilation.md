@@ -158,6 +158,32 @@ This approach ensures that:
 - Third-party libraries use their original packaged classes (protocol safety)
 - Source-only libraries work correctly at runtime
 
+## Macro-Generated Classes
+
+Some Clojure macros generate classes in the **macro's namespace** rather than the calling namespace. For example, Specter's `declarepath` macro generates classes like `com.rpl.specter.impl$local_declarepath` when you use it in your code.
+
+These classes don't exist in the original library JAR - they're only created during AOT compilation of YOUR code. The plugin detects these by checking if each AOT class exists in any dependency JAR. If not found in any JAR, the class is kept from AOT output.
+
+### Libraries with this pattern
+
+- **Specter** - `declarepath`, `providepath` macros
+- **core.async** - `go` macro generates state machine classes
+- **core.match** - pattern compilation uses internal protocols
+
+### How it works
+
+```
+For each AOT-generated class:
+  1. Is it first-party (matches source namespaces)? → Keep from AOT
+  2. Does it exist in any dependency JAR? → Discard, use JAR version
+  3. Not in any JAR? → Keep from AOT (it's macro-generated)
+```
+
+This approach ensures:
+- **Protocol safety**: Third-party classes from JARs have correct identity
+- **Macro support**: Classes that only exist in AOT output are preserved
+- **No runtime errors**: No `NoClassDefFoundError` for macro-generated classes
+
 ## Troubleshooting
 
 ### "No implementation of method" Errors

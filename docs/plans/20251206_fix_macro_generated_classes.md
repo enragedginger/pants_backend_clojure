@@ -1,7 +1,7 @@
 # Fix Macro-Generated Third-Party Classes in Uberjars
 
 **Date:** 2025-12-06
-**Status:** Draft
+**Status:** Implemented
 **Issue:** `NoClassDefFoundError` for macro-generated classes like `com/rpl/specter/impl$local_declarepath`
 
 ## Problem Statement
