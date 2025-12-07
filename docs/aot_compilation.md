@@ -176,13 +176,36 @@ These classes don't exist in the original library JAR - they're only created dur
 For each AOT-generated class:
   1. Is it first-party (matches source namespaces)? → Keep from AOT
   2. Does it exist in any dependency JAR? → Discard, use JAR version
-  3. Not in any JAR? → Keep from AOT (it's macro-generated)
+  3. Not in any JAR? → Keep from AOT (it's macro-generated or source-only lib)
 ```
 
 This approach ensures:
 - **Protocol safety**: Third-party classes from JARs have correct identity
 - **Macro support**: Classes that only exist in AOT output are preserved
 - **No runtime errors**: No `NoClassDefFoundError` for macro-generated classes
+
+## Source-Only Libraries
+
+Some Clojure libraries are distributed as source-only (`.clj`/`.cljc` files without pre-compiled `.class` files). Examples include Specter, core.async, and many others.
+
+For these libraries, the plugin uses a special strategy to prevent class identity issues:
+
+1. **AOT classes are kept**: Since the JAR has no `.class` files, all AOT-compiled classes for the library are included in the uberjar
+2. **Source files are excluded**: The library's source files (`.clj`/`.cljc`) are NOT included in the uberjar
+
+### Why exclude source files?
+
+When both AOT-compiled classes AND source files are present in a JAR, Clojure might reload the source at runtime (e.g., via `require :reload` or certain macro patterns). This creates **new class instances** that don't match the class identities baked into your AOT-compiled first-party code, causing errors like:
+
+```
+No implementation of method: :implicit-nav of protocol:
+#'com.rpl.specter.protocols/ImplicitNav found for class: com.rpl.specter.impl.DynamicPath
+```
+
+By excluding source files for source-only libraries, we ensure:
+- All code uses the same class identities (from AOT compilation)
+- No accidental source reloading can create class identity mismatches
+- Protocols and their implementations stay consistent
 
 ## Troubleshooting
 

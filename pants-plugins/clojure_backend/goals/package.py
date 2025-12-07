@@ -422,9 +422,13 @@ Created-By: Pants Build System
         # Pre-scan all dependency JARs once to:
         # 1. Build index of available classes (for AOT filtering in Step 1)
         # 2. Collect JAR entries for later extraction (Step 2)
+        # 3. Identify source-only JARs (no .class files) to handle specially
         # This enables detecting macro-generated classes that don't exist in any JAR.
         jar_class_files: set[str] = set()
-        jar_entries_to_extract: list[tuple[str, bytes]] = []
+        jar_entries_to_extract: list[tuple[str, bytes, bool]] = []  # (arcname, data, is_source_only_jar)
+        # Track which namespace paths have AOT classes from source-only JARs
+        # These source files should be excluded to prevent class identity issues
+        source_only_aot_namespace_paths: set[str] = set()
 
         for file_content in digest_contents:
             if file_content.path.endswith('.jar'):
@@ -438,7 +442,13 @@ Created-By: Pants Build System
                 try:
                     jar_bytes = io.BytesIO(file_content.content)
                     with zipfile.ZipFile(jar_bytes, 'r') as dep_jar:
-                        for item in dep_jar.namelist():
+                        # First pass: check if this JAR has any .class files
+                        jar_items = dep_jar.namelist()
+                        has_class_files = any(item.endswith('.class') for item in jar_items
+                                             if not item.startswith('META-INF/'))
+                        is_source_only_jar = not has_class_files
+
+                        for item in jar_items:
                             # Skip META-INF (includes signatures, manifests)
                             if item.startswith('META-INF/'):
                                 continue
@@ -454,7 +464,7 @@ Created-By: Pants Build System
                             # Store entry for later extraction in Step 2
                             try:
                                 data = dep_jar.read(item)
-                                jar_entries_to_extract.append((item, data))
+                                jar_entries_to_extract.append((item, data, is_source_only_jar))
                             except Exception:
                                 pass
                 except Exception:
@@ -464,16 +474,42 @@ Created-By: Pants Build System
 
         # Step 1: Add AOT-compiled classes
         # - First-party classes: always include from AOT
-        # - Third-party classes NOT in any JAR: include from AOT (macro-generated)
+        # - Third-party classes NOT in any JAR: include from AOT (macro-generated or source-only lib)
         # - Third-party classes that exist in JARs: skip (will come from JAR in Step 2)
         #
         # Why check JAR contents? Some macros (like Specter's declarepath) generate
         # classes in the macro's namespace, not the caller's namespace. These classes
         # don't exist in the original JAR - they're only created during AOT compilation
         # of code that USES the macro. We must keep these or get NoClassDefFoundError.
+        #
+        # IMPORTANT: For source-only libraries (JARs with no .class files, only .clj/.cljc),
+        # we include AOT classes AND track their namespace paths. In Step 2, we skip
+        # the source files for these namespaces to prevent class identity issues.
+        # The problem: if both AOT classes and source files are in the uberjar, Clojure
+        # might reload from source at runtime, creating new class identities that don't
+        # match the AOT-compiled references in first-party code.
         first_party_count = 0
-        third_party_aot_kept_count = 0  # Classes not in any JAR (macro-generated)
+        third_party_aot_kept_count = 0  # Classes not in any JAR (macro-generated or source-only)
         third_party_skipped = 0
+
+        def get_namespace_path_from_class(class_path: str) -> str | None:
+            """Extract the namespace path from a class file path.
+
+            Returns the namespace path (e.g., 'com/rpl/specter/impl') from a class
+            file path, or None if the path doesn't follow Clojure naming conventions.
+            """
+            # Remove .class extension
+            path = class_path[:-6]  # len('.class') == 6
+
+            # Handle inner classes: com/rpl/specter/impl$DynamicPath -> com/rpl/specter/impl
+            if '$' in path:
+                path = path.split('$')[0]
+
+            # Handle __init classes: com/rpl/specter/impl__init -> com/rpl/specter/impl
+            if path.endswith('__init'):
+                path = path[:-6]  # len('__init') == 6
+
+            return path if path else None
 
         for file_content in digest_contents:
             if file_content.path.startswith('classes/') and file_content.path.endswith('.class'):
@@ -488,11 +524,15 @@ Created-By: Pants Build System
                     added_entries.add(arcname)
                     first_party_count += 1
                 elif arcname not in jar_class_files:
-                    # Third-party class not in any JAR - must be macro-generated
+                    # Third-party class not in any JAR - must be macro-generated or from source-only lib
                     # Keep from AOT output since no JAR can provide it
                     jar.writestr(arcname, file_content.content)
                     added_entries.add(arcname)
                     third_party_aot_kept_count += 1
+                    # Track the namespace path so we can skip its source files in Step 2
+                    ns_path = get_namespace_path_from_class(arcname)
+                    if ns_path:
+                        source_only_aot_namespace_paths.add(ns_path)
                 else:
                     # Third-party class that exists in a JAR: skip
                     # Will be added in Step 2 from the original JAR (protocol safety)
@@ -501,6 +541,9 @@ Created-By: Pants Build System
         logger.info(f"AOT: included {first_party_count} first-party classes, "
                     f"{third_party_aot_kept_count} macro-generated classes (not in JARs), "
                     f"skipped {third_party_skipped} third-party classes (from JARs)")
+        if source_only_aot_namespace_paths:
+            logger.debug(f"Will skip source files for {len(source_only_aot_namespace_paths)} "
+                        f"AOT-compiled namespaces from source-only JARs")
 
         # Step 1.5: Add first-party source files when skip_aot=True
         # (When AOT is enabled, first-party sources are compiled to classes)
@@ -517,10 +560,31 @@ Created-By: Pants Build System
 
         # Step 2: Extract dependency JAR contents (pre-collected during index build)
         # All third-party content comes from here (.class, .clj, resources)
-        for arcname, data in jar_entries_to_extract:
+        #
+        # IMPORTANT: For source-only libraries, we skip their source files (.clj/.cljc)
+        # because we've already included AOT-compiled classes in Step 1. Including both
+        # would risk class identity issues at runtime if the source gets reloaded.
+        source_files_skipped = 0
+        for arcname, data, is_source_only_jar in jar_entries_to_extract:
             if arcname not in added_entries:
+                # Check if this is a source file from a source-only JAR that we've AOT compiled
+                if is_source_only_jar and (arcname.endswith('.clj') or arcname.endswith('.cljc')):
+                    # Convert source path to namespace path for checking
+                    # e.g., com/rpl/specter/impl.cljc -> com/rpl/specter/impl
+                    source_ns_path = arcname.rsplit('.', 1)[0]  # Remove .clj or .cljc extension
+                    # Clojure uses underscores in class names but hyphens in source files
+                    # We need to check both forms since our AOT paths use underscores
+                    source_ns_path_underscore = source_ns_path.replace('-', '_')
+                    if source_ns_path_underscore in source_only_aot_namespace_paths:
+                        # Skip this source file - we have AOT classes for it
+                        source_files_skipped += 1
+                        continue
                 jar.writestr(arcname, data)
                 added_entries.add(arcname)
+
+        if source_files_skipped > 0:
+            logger.info(f"Skipped {source_files_skipped} source files from source-only JARs "
+                       f"(using AOT classes instead to avoid class identity issues)")
 
     # Validate that the manifest's Main-Class is actually in the JAR
     if not skip_aot:

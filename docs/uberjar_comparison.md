@@ -136,6 +136,87 @@ The class `com/example/CustomMain.class` is included even though `com.example` d
 | First-party detection | Directory structure | N/A (includes all) | Source analysis |
 | Custom gen-class :name | Broken if filtering enabled | Works (no filtering) | Works (source analysis) |
 | Macro-generated classes | Works (merge order side-effect) | Works if class-dir first | Works (JAR contents check) |
+| Source files included | Yes (`:omit-source` to exclude) | Yes (user decides) | Conditional (excluded for AOT'd source-only libs) |
+| Source-only lib handling | No special handling | No special handling | Auto-detects, excludes source to prevent class identity issues |
+
+## Source File Handling
+
+A key difference between the tools is how they handle `.clj`/`.cljc` source files in uberjars.
+
+### Leiningen
+
+**Default: Include source files**
+
+By default, Leiningen includes both compiled `.class` files AND source `.clj` files in uberjars:
+
+```clojure
+;; From jar.clj - adds both compile-path and source-paths
+[{:type :path :path (:compile-path project)}
+ {:type :paths :paths (distinct (:resource-paths project))}]
+ (if-not (:omit-source project)
+   [{:type :paths :paths (distinct (concat (:source-paths project) ...))}])
+```
+
+**Optional exclusion**: Projects can set `:omit-source true` to exclude source files:
+
+```clojure
+;; project.clj
+{:omit-source true}  ; Leave source files out of JARs (for AOT projects)
+```
+
+**Documentation warning**: The sample.project.clj warns: "Putting :all here will AOT-compile everything, but this can cause issues with certain uses of protocols and records."
+
+### tools.build
+
+**Default: Include everything**
+
+tools.build takes a "simple, inclusive approach" - both compiled classes and source files are included. The typical workflow:
+
+```clojure
+(b/compile-clj {:basis basis :class-dir "target/classes" ...})
+(b/copy-dir {:target-dir "target/classes" :src-dirs ["src"]})  ; Source copied!
+(b/uber {:class-dir "target/classes" :uber-file "app.jar" :basis basis})
+```
+
+Tests explicitly show both sources and classes in the final JAR:
+```clojure
+;; Expected contents
+#{"META-INF/MANIFEST.MF" "foo/" "foo/bar.clj" "foo/Demo2.class" "foo/Demo1.class"}
+```
+
+**User responsibility**: The build script author decides what to include/exclude. There's no built-in logic to handle source-only libraries or protocol issues.
+
+### pants-clojure
+
+**Default: Conditional based on library type**
+
+We take a more nuanced approach:
+
+| Library Type | Classes | Source Files |
+|--------------|---------|--------------|
+| Pre-compiled (has .class in JAR) | From JAR | From JAR |
+| Source-only (no .class in JAR) | From AOT | **Excluded** |
+| First-party | From AOT | Excluded (compiled) |
+
+**Why exclude source for source-only libraries?**
+
+When both AOT-compiled classes AND source files are present, Clojure might reload source at runtime (e.g., via `require :reload` or certain macro patterns). This creates fresh class instances that don't match the class identities baked into first-party AOT code, causing errors like:
+
+```
+No implementation of method: :implicit-nav of protocol:
+#'com.rpl.specter.protocols/ImplicitNav found for class: com.rpl.specter.impl.DynamicPath
+```
+
+By excluding source files for source-only libraries when we have AOT classes, we ensure consistent class identities throughout the application.
+
+### Comparison Table: Source File Handling
+
+| Aspect | Leiningen | tools.build | pants-clojure |
+|--------|-----------|-------------|---------------|
+| Include source by default | Yes | Yes | Conditional |
+| `:omit-source` option | Yes | Manual (don't copy) | Automatic for source-only libs |
+| Protocol issue handling | Documentation warning | User responsibility | Automatic exclusion |
+| Source-only lib detection | No | No | Yes |
 
 ## Macro-Generated Classes
 
