@@ -1,13 +1,14 @@
 """Clojure backend for Pants."""
 
 from clojure_backend import (
-    aot_compile,
     clojure_symbol_mapping,
     compile_clj,
     dependency_inference,
     namespace_analysis,
     provided_dependencies,
+    tools_build_uberjar,
 )
+from clojure_backend.subsystems import tools_build
 from clojure_backend.goals import (
     check,
     fmt,
@@ -44,7 +45,6 @@ def rules():
     return [
         *target_type_rules(),
         *compile_clj.rules(),
-        *aot_compile.rules(),
         *provided_dependencies.rules(),
         *package.rules(),
         *fmt.rules(),
@@ -57,4 +57,6 @@ def rules():
         *clojure_symbol_mapping.rules(),
         *generate_clojure_lockfile_metadata.rules(),
         *namespace_analysis.rules(),
+        *tools_build.rules(),
+        *tools_build_uberjar.rules(),
     ]

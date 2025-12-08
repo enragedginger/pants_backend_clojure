@@ -1,10 +1,12 @@
 # AOT Compilation in clojure_deploy_jar
 
-This document explains how AOT (Ahead-of-Time) compilation works in the `clojure_deploy_jar` target and how the plugin handles transitively compiled third-party classes.
+This document explains how AOT (Ahead-of-Time) compilation works in the `clojure_deploy_jar` target.
 
 ## Overview
 
-When you create a `clojure_deploy_jar`, the main namespace is AOT compiled along with all namespaces it transitively requires. This produces an executable JAR that starts quickly without runtime compilation.
+When you create a `clojure_deploy_jar`, the plugin delegates AOT compilation and uberjar packaging to **tools.build**, the official Clojure build tool. This provides reliable, battle-tested handling of all AOT compilation complexities.
+
+The main namespace is AOT compiled along with all namespaces it transitively requires, producing an executable JAR that starts quickly without runtime compilation.
 
 ## Basic Usage
 
@@ -107,105 +109,67 @@ java -jar my-app-source-only.jar -m my.actual.namespace
 
 ## How It Works
 
-### The Challenge
+### tools.build Integration
 
-When AOT-compiling `my.app.core`, Clojure will also compile:
-- `clojure.core`
-- `clojure.string`
-- Any third-party library namespaces your code requires
-- All transitive dependencies
+The plugin uses Clojure's official **tools.build** library to handle AOT compilation and uberjar creation. This approach:
 
-If these third-party `.class` files were included in your uberjar WITHOUT the correct handling, they could cause problems with protocol extensions (class identity mismatches).
+1. **Delegates complexity**: tools.build handles all the intricacies of AOT compilation
+2. **Uses Pants-resolved classpaths**: Dependencies are resolved by Pants/Coursier, not tools.deps
+3. **Maintains classpath isolation**: tools.build runs in its own JVM, separate from application compilation
 
-### Protocol Extension Issues
+### The Process
 
-Protocol extensions in Clojure rely on runtime evaluation order - the protocol must be defined before extensions are added. When AOT-compiled classes for protocols are mixed with non-AOT code:
+1. **Pants resolves dependencies** using Coursier
+2. **tools.build compiles** your main namespace (Clojure transitively compiles required namespaces)
+3. **tools.build packages** the uberjar with compiled classes and dependency JARs
 
-1. The AOT-compiled class references the protocol interface directly
-2. If the protocol was compiled separately (different compile run), class identities don't match
-3. This causes "No implementation of method" errors
-
-Example error:
 ```
-java.lang.IllegalArgumentException: No implementation of method: :spec of protocol:
-#'rpl.schema.core/Schema found for class: rpl.rama.util.schema.Volatile
+┌─────────────────────────────────────────────────────────────────────┐
+│                     JVM Process (started by Pants)                  │
+│  Classpath: tools.build + Clojure + tools.deps + tools.namespace   │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │  build.clj script                                            │   │
+│  │                                                              │   │
+│  │  (b/compile-clj {:basis compile-basis ...})                  │   │
+│  │        │                                                     │   │
+│  │        ▼  forks new JVM                                      │   │
+│  │  ┌──────────────────────────────────────────────────────┐   │   │
+│  │  │  Compilation subprocess                               │   │   │
+│  │  │  Classpath: src/ + compile-libs/*.jar                 │   │   │
+│  │  │  (includes provided deps for type resolution)         │   │   │
+│  │  └──────────────────────────────────────────────────────┘   │   │
+│  │                                                              │   │
+│  │  (b/uber {:basis uber-basis ...})                            │   │
+│  │        │                                                     │   │
+│  │        ▼  reads JARs from uber-basis classpath               │   │
+│  │  ┌──────────────────────────────────────────────────────┐   │   │
+│  │  │  Packages: classes/ + uber-libs/*.jar → app.jar       │   │   │
+│  │  │  (excludes provided deps from final JAR)              │   │   │
+│  │  └──────────────────────────────────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-### Our Solution: First-Party AOT Only
+### Classpath Isolation
 
-The `clojure_deploy_jar` packaging rule uses a targeted approach:
+tools.build maintains strict classpath isolation:
 
-1. **First pass: Add only first-party AOT-compiled classes**
-   - Classes from AOT compilation are filtered by namespace
-   - Only classes belonging to your project's namespaces (from `clojure_source` targets) are added
-   - Third-party classes from AOT are discarded
+- **tools.build classpath**: Contains tools.build, Clojure, tools.deps, etc.
+- **Compile classpath**: Your sources + ALL dependencies (including provided)
+- **Uber classpath**: Your sources + runtime dependencies (excluding provided)
 
-2. **Second pass: Extract dependency JARs**
-   - All dependency JAR contents are extracted into the uberjar
-   - Third-party classes come from the original JARs (correct protocol identity)
-   - Source-only libraries have their source files included
-
-### Why This Works
-
-| Scenario | AOT Classes | JAR Contents | Result |
-|----------|-------------|--------------|--------|
-| Pre-compiled library | Discarded | `lib/Protocol.class` (correct) | JAR provides correct classes |
-| Source-only library | Discarded | `lib/source_only.clj` | Source included for runtime compilation |
-| First-party code | Included | N/A | Project classes from AOT |
-
-This approach ensures that:
-- First-party code gets the performance benefits of AOT compilation
-- Third-party libraries use their original packaged classes (protocol safety)
-- Source-only libraries work correctly at runtime
+When `b/compile-clj` runs, it forks a NEW JVM with only the application's classpath. This ensures your application is compiled with its own Clojure version, not the tools.build's version.
 
 ## Macro-Generated Classes
 
-Some Clojure macros generate classes in the **macro's namespace** rather than the calling namespace. For example, Specter's `declarepath` macro generates classes like `com.rpl.specter.impl$local_declarepath` when you use it in your code.
-
-These classes don't exist in the original library JAR - they're only created during AOT compilation of YOUR code. The plugin detects these by checking if each AOT class exists in any dependency JAR. If not found in any JAR, the class is kept from AOT output.
+tools.build correctly handles macro-generated classes. When macros like `defrecord`, `deftype`, or library-specific macros (Specter's `declarepath`, core.async's `go`) generate classes, they are properly included in the final JAR.
 
 ### Libraries with this pattern
 
 - **Specter** - `declarepath`, `providepath` macros
 - **core.async** - `go` macro generates state machine classes
-- **core.match** - pattern compilation uses internal protocols
-
-### How it works
-
-```
-For each AOT-generated class:
-  1. Is it first-party (matches source namespaces)? → Keep from AOT
-  2. Does it exist in any dependency JAR? → Discard, use JAR version
-  3. Not in any JAR? → Keep from AOT (it's macro-generated or source-only lib)
-```
-
-This approach ensures:
-- **Protocol safety**: Third-party classes from JARs have correct identity
-- **Macro support**: Classes that only exist in AOT output are preserved
-- **No runtime errors**: No `NoClassDefFoundError` for macro-generated classes
-
-## Source-Only Libraries
-
-Some Clojure libraries are distributed as source-only (`.clj`/`.cljc` files without pre-compiled `.class` files). Examples include Specter, core.async, and many others.
-
-For these libraries, the plugin uses a special strategy to prevent class identity issues:
-
-1. **AOT classes are kept**: Since the JAR has no `.class` files, all AOT-compiled classes for the library are included in the uberjar
-2. **Source files are excluded**: The library's source files (`.clj`/`.cljc`) are NOT included in the uberjar
-
-### Why exclude source files?
-
-When both AOT-compiled classes AND source files are present in a JAR, Clojure might reload the source at runtime (e.g., via `require :reload` or certain macro patterns). This creates **new class instances** that don't match the class identities baked into your AOT-compiled first-party code, causing errors like:
-
-```
-No implementation of method: :implicit-nav of protocol:
-#'com.rpl.specter.protocols/ImplicitNav found for class: com.rpl.specter.impl.DynamicPath
-```
-
-By excluding source files for source-only libraries, we ensure:
-- All code uses the same class identities (from AOT compilation)
-- No accidental source reloading can create class identity mismatches
-- Protocols and their implementations stay consistent
+- **core.match** - pattern compilation generates internal classes
 
 ## Troubleshooting
 
@@ -217,7 +181,7 @@ java.lang.IllegalArgumentException: No implementation of method: :foo of protoco
 #'some.lib/Protocol found for class: some.lib.SomeRecord
 ```
 
-This typically indicates a protocol/class identity mismatch. The first-party-only AOT approach should resolve this issue. If you still see this error:
+This typically indicates a protocol/class identity mismatch. The tools.build integration should handle most cases correctly. If you still see this error:
 
 1. Ensure you're using the latest version of pants-backend-clojure
 2. Check if the library has any special packaging requirements
@@ -235,7 +199,7 @@ jar tf dist/my-app.jar | grep '\.class$'
 # Check for first-party classes
 jar tf dist/my-app.jar | grep '^myapp/'
 
-# Check for third-party classes (should be from JARs)
+# Check for third-party classes
 jar tf dist/my-app.jar | grep '^clojure/core'
 ```
 
@@ -247,9 +211,7 @@ To see packaging details, run Pants with debug logging:
 pants --level=debug package //path/to:my_deploy_jar
 ```
 
-You'll see messages about:
-- How many first-party classes were included from AOT
-- How many third-party classes were skipped
+You'll see messages from tools.build about compilation and packaging progress.
 
 ## Provided Dependencies
 

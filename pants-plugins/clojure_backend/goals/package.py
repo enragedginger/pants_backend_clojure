@@ -2,12 +2,9 @@ from __future__ import annotations
 
 import io
 import logging
-import os
 import re
 import zipfile
 from dataclasses import dataclass
-
-logger = logging.getLogger(__name__)
 
 from pants.core.goals.package import (
     BuiltPackage,
@@ -18,7 +15,14 @@ from pants.core.goals.package import (
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.core.util_rules.stripped_source_files import StrippedSourceFiles
 from pants.engine.addresses import Addresses
-from pants.engine.fs import CreateDigest, Digest, DigestContents, EMPTY_DIGEST, FileContent, MergeDigests
+from pants.engine.fs import (
+    CreateDigest,
+    Digest,
+    DigestContents,
+    EMPTY_DIGEST,
+    FileContent,
+    MergeDigests,
+)
 from pants.engine.internals.selectors import Get, MultiGet
 from pants.engine.rules import collect_rules, rule
 from pants.engine.target import (
@@ -29,13 +33,8 @@ from pants.engine.unions import UnionRule
 from pants.jvm.classpath import Classpath
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmJdkField, JvmResolveField
-from pants.util.frozendict import FrozenDict
 from pants.util.logging import LogLevel
 
-from clojure_backend.aot_compile import (
-    CompileClojureAOTRequest,
-    CompiledClojureClasses,
-)
 from clojure_backend.namespace_analysis import (
     ClojureNamespaceAnalysis,
     ClojureNamespaceAnalysisRequest,
@@ -45,11 +44,47 @@ from clojure_backend.provided_dependencies import (
     ResolveProvidedDependenciesRequest,
 )
 from clojure_backend.target_types import (
-    ClojureProvidedDependenciesField,
     ClojureMainNamespaceField,
+    ClojureProvidedDependenciesField,
     ClojureSourceField,
     ClojureTestSourceField,
 )
+from clojure_backend.tools_build_uberjar import (
+    ToolsBuildUberjarRequest,
+    ToolsBuildUberjarResult,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def extract_main_class(main_namespace: str, source_content: str) -> str:
+    """Extract the main class name from a Clojure source file.
+
+    If the namespace has (:gen-class :name com.example.MyClass), returns "com.example.MyClass".
+    Otherwise, returns the munged namespace name (hyphens -> underscores).
+
+    Args:
+        main_namespace: The namespace name (e.g., "my-app.core")
+        source_content: The source file content
+
+    Returns:
+        The main class name for the manifest
+    """
+    # Look for :name in gen-class declaration
+    # Match patterns like:
+    #   (:gen-class :name com.example.MyClass)
+    #   (:gen-class :init init :name com.example.MyClass :methods [...])
+    gen_class_name_match = re.search(
+        r'\(:gen-class[^)]*:name\s+([\w.-]+)',
+        source_content,
+        re.DOTALL,
+    )
+
+    if gen_class_name_match:
+        return gen_class_name_match.group(1)
+    else:
+        # Default: munge namespace name (hyphens -> underscores)
+        return main_namespace.replace("-", "_")
 
 
 @dataclass(frozen=True)
@@ -73,17 +108,18 @@ async def package_clojure_deploy_jar(
     field_set: ClojureDeployJarFieldSet,
     jvm: JvmSubsystem,
 ) -> BuiltPackage:
-    """Package a Clojure application into an executable JAR with AOT compilation.
+    """Package a Clojure application into an executable JAR.
 
-    This rule:
-    1. AOT compiles the main namespace transitively (or skips AOT for clojure.main)
-    2. Validates the main namespace has (:gen-class) if AOT compiling
-    3. Packages all dependencies into a single executable JAR
+    This rule handles two modes:
+    1. Source-only JAR (main="clojure.main"): Packages source files without AOT compilation
+    2. AOT-compiled JAR: Delegates to tools.build for AOT compilation and uberjar creation
+
+    tools.build handles the complexity of AOT compilation correctly, including:
+    - Protocol classes
+    - Macro-generated classes
+    - Transitive namespace compilation
     """
-
     main_namespace = field_set.main.value
-
-    # Check for source-only mode (using clojure.main)
     skip_aot = main_namespace == "clojure.main"
 
     # Get transitive targets to find all Clojure sources
@@ -99,290 +135,30 @@ async def package_clojure_deploy_jar(
         if tgt.has_field(ClojureSourceField) or tgt.has_field(ClojureTestSourceField)
     ]
 
-    # Get all source files for analysis
-    source_fields = []
-    for tgt in clojure_source_targets:
-        if tgt.has_field(ClojureSourceField):
-            source_fields.append(tgt[ClojureSourceField])
-        elif tgt.has_field(ClojureTestSourceField):
-            source_fields.append(tgt[ClojureTestSourceField])
-
-    # Get source files and analyze namespaces using clj-kondo
-    if source_fields:
-        source_files = await Get(
-            SourceFiles,
-            SourceFilesRequest(source_fields),
-        )
-        # Analyze all source files in batch using clj-kondo
-        namespace_analysis = await Get(
-            ClojureNamespaceAnalysis,
-            ClojureNamespaceAnalysisRequest(source_files.snapshot),
-        )
-        digest_contents = await Get(DigestContents, Digest, source_files.snapshot.digest)
-    else:
-        namespace_analysis = ClojureNamespaceAnalysis(
-            namespaces=FrozenDict({}),
-            requires=FrozenDict({}),
-            imports=FrozenDict({}),
-        )
-        digest_contents = []
-
-    # Build set of first-party namespace paths for filtering AOT classes
-    # These represent namespaces from clojure_source targets in the project
-    first_party_namespace_paths: set[str] = set()
-    for source_path, namespace in namespace_analysis.namespaces.items():
-        # Convert namespace to class path: my.app.core -> my/app/core
-        # Clojure converts hyphens to underscores in class names
-        namespace_path = namespace.replace('.', '/').replace('-', '_')
-        first_party_namespace_paths.add(namespace_path)
-
-    logger.debug(f"First-party namespaces: {first_party_namespace_paths}")
-
-    # Also track gen-class :name declarations from all first-party sources
-    # This ensures classes generated by (:gen-class :name X) are included in the JAR
-    first_party_gen_class_paths: set[str] = set()
-
-    for file_content in digest_contents:
-        source_content = file_content.content.decode("utf-8")
-        # Look for (:gen-class ... :name X) pattern
-        # The pattern handles :name appearing anywhere within the gen-class form
-        gen_class_name_match = re.search(
-            r'\(:gen-class\s+(?:[^)]*?\s)?:name\s+([a-zA-Z][\w.]*)',
-            source_content,
-            re.DOTALL,
-        )
-        if gen_class_name_match:
-            class_name = gen_class_name_match.group(1)
-            # Convert com.example.MyApp -> com/example/MyApp
-            class_path = class_name.replace('.', '/')
-            first_party_gen_class_paths.add(class_path)
-
-    logger.debug(f"First-party gen-class names: {first_party_gen_class_paths}")
-
-    # Determine which namespaces to compile
-    if skip_aot:
-        namespaces_to_compile: tuple[str, ...] = ()
-    else:
-        # Always compile just the main namespace - transitive compilation handles deps
-        namespaces_to_compile = (main_namespace,)
-
-    # Only validate gen-class if we're doing AOT compilation
-    # Source-only JARs (main=clojure.main) don't need gen-class validation
-    if skip_aot:
-        # Source-only mode with clojure.main
-        main_class_name = "clojure.main"
-    else:
-        # Find the source file for main namespace using the analysis result
-        # Build reverse mapping: namespace -> file path
-        namespace_to_file = {ns: path for path, ns in namespace_analysis.namespaces.items()}
-        main_source_path = namespace_to_file.get(main_namespace)
-        main_source_file = None
-
-        if main_source_path:
-            # Find the file content for the main source
-            for file_content in digest_contents:
-                if file_content.path == main_source_path:
-                    main_source_file = file_content.content.decode("utf-8")
-                    break
-
-        if not main_source_file:
-            raise ValueError(
-                f"Could not find source file for main namespace '{main_namespace}'.\n\n"
-                f"Common causes:\n"
-                f"  - Main namespace is not in the dependencies of this target\n"
-                f"  - Namespace name doesn't match the file path\n"
-                f"  - Missing (ns {main_namespace}) declaration in source file\n\n"
-                f"Troubleshooting:\n"
-                f"  1. Verify dependencies: pants dependencies {field_set.address}\n"
-                f"  2. Check file contains (ns {main_namespace}) declaration\n"
-                f"  3. Ensure the namespace follows Clojure naming conventions\n"
-            )
-
-        # Default class name is namespace with hyphens munged to underscores
-        # Clojure always munges hyphens to underscores in generated class names
-        main_class_name = main_namespace.replace('-', '_')
-        # Check for (:gen-class) in the namespace declaration
-        # Use a more robust check that looks for gen-class in the ns form, not just anywhere
-        # This regex looks for (ns ...) followed by gen-class before the closing paren
-        # It handles multi-line ns declarations with multiple clauses
-        ns_with_gen_class = re.search(
-            r'\(ns\s+[\w.-]+.*?\(:gen-class',
-            main_source_file,
-            re.DOTALL,
-        )
-
-        if not ns_with_gen_class:
-            raise ValueError(
-                f"Main namespace '{main_namespace}' must include (:gen-class) in its ns declaration "
-                f"to be used as an entry point for an executable JAR.\n\n"
-                f"Example:\n"
-                f"(ns {main_namespace}\n"
-                f"  (:gen-class))\n\n"
-                f"(defn -main [& args]\n"
-                f"  (println \"Hello, World!\"))"
-            )
-
-        # Get the main class name from the gen-class declaration
-        # Look for (:gen-class ... :name CustomClassName)
-        # The pattern handles :name appearing anywhere within the gen-class form
-        gen_class_name_match = re.search(
-            r'\(:gen-class\s+(?:[^)]*?\s)?:name\s+([a-zA-Z][\w.]*)',
-            main_source_file,
-            re.DOTALL,
-        )
-
-        if gen_class_name_match:
-            main_class_name = gen_class_name_match.group(1)
-
     # Get provided dependencies to exclude from the JAR
-    # Pass the resolve name so Maven transitives can be looked up in the lockfile
     resolve_name = field_set.resolve.normalized_value(jvm)
     provided_deps = await Get(
         ProvidedDependencies,
         ResolveProvidedDependenciesRequest(field_set.provided, resolve_name),
     )
 
-    # Build full address set for AOT compilation (includes everything)
-    all_source_addresses = Addresses(tgt.address for tgt in clojure_source_targets)
-
-    # Build runtime address set for JAR packaging (excludes provided and their transitives)
-    runtime_source_addresses = Addresses(
-        addr for addr in all_source_addresses
-        if addr not in provided_deps.addresses
-    )
-
-    # Get runtime classpath and compiled classes
-    # Note: AOT compilation uses ALL addresses (including provided)
-    #       JAR packaging uses RUNTIME addresses (excluding provided)
-    if skip_aot:
-        # No AOT - get classpath only, use empty digest for compiled classes
-        runtime_classpath = await Get(Classpath, Addresses, runtime_source_addresses)
-        compiled_classes = CompiledClojureClasses(
-            digest=EMPTY_DIGEST,
-            classpath_entry=None,
-        )
-    else:
-        runtime_classpath, compiled_classes = await MultiGet(
-            Get(Classpath, Addresses, runtime_source_addresses),
-            Get(
-                CompiledClojureClasses,
-                CompileClojureAOTRequest(
-                    namespaces=namespaces_to_compile,
-                    source_addresses=all_source_addresses,  # AOT needs all deps
-                    jdk=field_set.jdk,
-                    resolve=field_set.resolve,
-                ),
-            ),
-        )
-
     # Determine output filename
-    output_filename = field_set.output_path.value_or_default(
-        file_ending="jar",
-    )
+    output_filename = field_set.output_path.value_or_default(file_ending="jar")
 
-    # Build set of namespaces for provided dependencies to exclude from JAR
-    # Collect all source fields for provided targets
-    provided_source_fields = []
-    for tgt in clojure_source_targets:
-        if tgt.address in provided_deps.addresses:
-            if tgt.has_field(ClojureSourceField):
-                provided_source_fields.append(tgt[ClojureSourceField])
-            elif tgt.has_field(ClojureTestSourceField):
-                provided_source_fields.append(tgt[ClojureTestSourceField])
-
-    # Get all source files and analyze namespaces
-    provided_namespaces: set[str] = set()
-    provided_namespace_paths: set[str] = set()
-    if provided_source_fields:
-        provided_source_files = await Get(
-            SourceFiles,
-            SourceFilesRequest(provided_source_fields),
+    # =========================================================================
+    # Source-only JAR path (main="clojure.main")
+    # =========================================================================
+    if skip_aot:
+        # Build runtime address set for JAR packaging (excludes provided)
+        runtime_source_addresses = Addresses(
+            tgt.address for tgt in clojure_source_targets
+            if tgt.address not in provided_deps.addresses
         )
-        if provided_source_files.files:
-            # Analyze provided source files using clj-kondo
-            provided_analysis = await Get(
-                ClojureNamespaceAnalysis,
-                ClojureNamespaceAnalysisRequest(provided_source_files.snapshot),
-            )
-            provided_namespaces = set(provided_analysis.namespaces.values())
-            # Convert namespaces to class paths for filtering AOT classes
-            for namespace in provided_namespaces:
-                namespace_path = namespace.replace('.', '/').replace('-', '_')
-                provided_namespace_paths.add(namespace_path)
 
-    def is_provided_class(arcname: str) -> bool:
-        """Check if a class file belongs to a provided dependency namespace."""
-        if not provided_namespace_paths:
-            return False
-        # Remove .class extension
-        class_path = arcname[:-6]  # len('.class') == 6
-        # Handle inner classes (split on $) and __init classes
-        base_class_path = class_path.split('$')[0]
-        if base_class_path.endswith('__init'):
-            base_class_path = base_class_path[:-6]  # len('__init') == 6
-        # Check if class path matches or is a child of a provided namespace path
-        # This handles defrecord/deftype/defprotocol which create subdirectories
-        for ns_path in provided_namespace_paths:
-            if base_class_path == ns_path or base_class_path.startswith(ns_path + '/'):
-                return True
-        return False
+        # Get classpath (excluding provided deps via address filtering)
+        runtime_classpath = await Get(Classpath, Addresses, runtime_source_addresses)
 
-    def is_first_party_class(arcname: str) -> bool:
-        """Check if a class file belongs to a first-party namespace or gen-class."""
-        if not first_party_namespace_paths:
-            return True  # Fallback: include all if no analysis available
-
-        class_path = arcname[:-6]  # Remove .class
-        base_class_path = class_path.split('$')[0]  # Handle inner classes (fn, reify)
-        if base_class_path.endswith('__init'):
-            base_class_path = base_class_path[:-6]
-
-        # Check if class path matches or is a child of a namespace path
-        # This handles:
-        #   - my/app/core__init.class (namespace init)
-        #   - my/app/core.class (gen-class without :name)
-        #   - my/app/core$fn__123.class (anonymous functions)
-        #   - my/app/core/MyRecord.class (defrecord - creates subdirectory)
-        #   - my/app/core/MyType.class (deftype - creates subdirectory)
-        #   - my/app/core/MyProtocol.class (defprotocol - creates subdirectory)
-        for ns_path in first_party_namespace_paths:
-            if base_class_path == ns_path or base_class_path.startswith(ns_path + '/'):
-                return True
-
-        # Check gen-class :name paths (exact match for custom named classes)
-        # Note: gen-class :name classes don't have inner classes or __init suffix
-        if class_path in first_party_gen_class_paths:
-            return True
-
-        return False
-
-    # Create JAR manifest
-    if skip_aot:
-        # Source-only JAR using clojure.main as entry point
-        manifest_content = """\
-Manifest-Version: 1.0
-Main-Class: clojure.main
-Created-By: Pants Build System
-X-Source-Only: true
-"""
-    else:
-        # Standard manifest with executable main class
-        manifest_content = f"""\
-Manifest-Version: 1.0
-Main-Class: {main_class_name}
-Created-By: Pants Build System
-"""
-
-    # Get the contents of compiled classes and dependency JARs
-    # Note: Uses runtime_classpath which excludes compile-only dependencies
-    all_digests = [compiled_classes.digest, *runtime_classpath.digests()]
-    merged_digest = await Get(Digest, MergeDigests(all_digests))
-    digest_contents = await Get(DigestContents, Digest, merged_digest)
-
-    # For source-only JARs, get first-party source files with stripped source roots
-    stripped_source_contents: list = []
-    if skip_aot:
-        # Get source files for first-party targets (excluding provided)
+        # Get first-party source files with stripped roots
         first_party_source_fields = [
             tgt[ClojureSourceField] if tgt.has_field(ClojureSourceField)
             else tgt[ClojureTestSourceField]
@@ -391,7 +167,6 @@ Created-By: Pants Build System
         ]
 
         if first_party_source_fields:
-            # Get stripped version (removes source roots like src/)
             stripped_sources = await Get(
                 StrippedSourceFiles,
                 SourceFilesRequest(
@@ -399,224 +174,263 @@ Created-By: Pants Build System
                     for_sources_types=(ClojureSourceField, ClojureTestSourceField),
                 ),
             )
-            stripped_source_contents = await Get(
-                DigestContents, Digest, stripped_sources.snapshot.digest
-            )
-
-    # Create the uberjar in memory using Python's zipfile module
-    jar_buffer = io.BytesIO()
-    with zipfile.ZipFile(jar_buffer, 'w', zipfile.ZIP_DEFLATED) as jar:
-        # Write manifest first (uncompressed as per JAR spec)
-        jar.writestr('META-INF/MANIFEST.MF', manifest_content, compress_type=zipfile.ZIP_STORED)
-
-        # Track what we've added to avoid duplicates
-        added_entries = {'META-INF/MANIFEST.MF'}
+            source_digest = stripped_sources.snapshot.digest
+        else:
+            source_digest = EMPTY_DIGEST
 
         # Build set of artifact prefixes to exclude based on coordinates
-        # Pants/Coursier JAR filenames follow: {group}_{artifact}_{version}.jar pattern
-        # e.g., "org.clojure_clojure_1.11.0.jar" for org.clojure:clojure:1.11.0
         excluded_artifact_prefixes = set()
         for group, artifact in provided_deps.coordinates:
             excluded_artifact_prefixes.add(f"{group}_{artifact}_")
 
-        # Pre-scan all dependency JARs once to:
-        # 1. Build index of available classes (for AOT filtering in Step 1)
-        # 2. Collect JAR entries for later extraction (Step 2)
-        # 3. Identify source-only JARs (no .class files) to handle specially
-        # This enables detecting macro-generated classes that don't exist in any JAR.
-        jar_class_files: set[str] = set()
-        jar_entries_to_extract: list[tuple[str, bytes, bool]] = []  # (arcname, data, is_source_only_jar)
-        # Track which namespace paths have AOT classes from source-only JARs
-        # These source files should be excluded to prevent class identity issues
-        source_only_aot_namespace_paths: set[str] = set()
+        # Get dependency JAR contents
+        merged_classpath = await Get(Digest, MergeDigests(runtime_classpath.digests()))
+        classpath_contents = await Get(DigestContents, Digest, merged_classpath)
+        source_contents = await Get(DigestContents, Digest, source_digest)
 
-        for file_content in digest_contents:
-            if file_content.path.endswith('.jar'):
-                jar_filename = os.path.basename(file_content.path)
-                should_exclude = any(
-                    jar_filename.startswith(prefix) for prefix in excluded_artifact_prefixes
-                )
-                if should_exclude:
-                    continue
+        # Create the JAR in memory
+        jar_buffer = io.BytesIO()
+        with zipfile.ZipFile(jar_buffer, 'w', zipfile.ZIP_DEFLATED) as jar:
+            # Write manifest (source-only mode)
+            manifest_content = """\
+Manifest-Version: 1.0
+Main-Class: clojure.main
+Created-By: Pants Build System
+X-Source-Only: true
+"""
+            jar.writestr('META-INF/MANIFEST.MF', manifest_content, compress_type=zipfile.ZIP_STORED)
+            added_entries = {'META-INF/MANIFEST.MF'}
 
-                try:
-                    jar_bytes = io.BytesIO(file_content.content)
-                    with zipfile.ZipFile(jar_bytes, 'r') as dep_jar:
-                        # First pass: check if this JAR has any .class files
-                        jar_items = dep_jar.namelist()
-                        has_class_files = any(item.endswith('.class') for item in jar_items
-                                             if not item.startswith('META-INF/'))
-                        is_source_only_jar = not has_class_files
-
-                        for item in jar_items:
-                            # Skip META-INF (includes signatures, manifests)
-                            if item.startswith('META-INF/'):
-                                continue
-                            # Skip LICENSE files at root level (can conflict between deps)
-                            item_basename = os.path.basename(item).upper()
-                            if item_basename.startswith('LICENSE'):
-                                continue
-
-                            # Index class files for AOT filtering
-                            if item.endswith('.class'):
-                                jar_class_files.add(item)
-
-                            # Store entry for later extraction in Step 2
-                            try:
-                                data = dep_jar.read(item)
-                                jar_entries_to_extract.append((item, data, is_source_only_jar))
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-
-        logger.debug(f"Found {len(jar_class_files)} classes in dependency JARs")
-
-        # Step 1: Add AOT-compiled classes
-        # - First-party classes: always include from AOT
-        # - Third-party classes NOT in any JAR: include from AOT (macro-generated or source-only lib)
-        # - Third-party classes that exist in JARs: skip (will come from JAR in Step 2)
-        #
-        # Why check JAR contents? Some macros (like Specter's declarepath) generate
-        # classes in the macro's namespace, not the caller's namespace. These classes
-        # don't exist in the original JAR - they're only created during AOT compilation
-        # of code that USES the macro. We must keep these or get NoClassDefFoundError.
-        #
-        # IMPORTANT: For source-only libraries (JARs with no .class files, only .clj/.cljc),
-        # we include AOT classes AND track their namespace paths. In Step 2, we skip
-        # the source files for these namespaces to prevent class identity issues.
-        # The problem: if both AOT classes and source files are in the uberjar, Clojure
-        # might reload from source at runtime, creating new class identities that don't
-        # match the AOT-compiled references in first-party code.
-        first_party_count = 0
-        third_party_aot_kept_count = 0  # Classes not in any JAR (macro-generated or source-only)
-        third_party_skipped = 0
-
-        def get_namespace_path_from_class(class_path: str) -> str | None:
-            """Extract the namespace path from a class file path.
-
-            Returns the namespace path (e.g., 'com/rpl/specter/impl') from a class
-            file path, or None if the path doesn't follow Clojure naming conventions.
-            """
-            # Remove .class extension
-            path = class_path[:-6]  # len('.class') == 6
-
-            # Handle inner classes: com/rpl/specter/impl$DynamicPath -> com/rpl/specter/impl
-            if '$' in path:
-                path = path.split('$')[0]
-
-            # Handle __init classes: com/rpl/specter/impl__init -> com/rpl/specter/impl
-            if path.endswith('__init'):
-                path = path[:-6]  # len('__init') == 6
-
-            return path if path else None
-
-        for file_content in digest_contents:
-            if file_content.path.startswith('classes/') and file_content.path.endswith('.class'):
-                arcname = file_content.path[8:]  # len('classes/') == 8
-                # Skip classes belonging to provided Clojure source dependencies
-                if is_provided_class(arcname):
-                    continue
-
-                if is_first_party_class(arcname):
-                    # First-party class: include from AOT
-                    jar.writestr(arcname, file_content.content)
-                    added_entries.add(arcname)
-                    first_party_count += 1
-                elif arcname not in jar_class_files:
-                    # Third-party class not in any JAR - must be macro-generated or from source-only lib
-                    # Keep from AOT output since no JAR can provide it
-                    jar.writestr(arcname, file_content.content)
-                    added_entries.add(arcname)
-                    third_party_aot_kept_count += 1
-                    # Track the namespace path so we can skip its source files in Step 2
-                    ns_path = get_namespace_path_from_class(arcname)
-                    if ns_path:
-                        source_only_aot_namespace_paths.add(ns_path)
-                else:
-                    # Third-party class that exists in a JAR: skip
-                    # Will be added in Step 2 from the original JAR (protocol safety)
-                    third_party_skipped += 1
-
-        logger.info(f"AOT: included {first_party_count} first-party classes, "
-                    f"{third_party_aot_kept_count} macro-generated classes (not in JARs), "
-                    f"skipped {third_party_skipped} third-party classes (from JARs)")
-        if source_only_aot_namespace_paths:
-            logger.debug(f"Will skip source files for {len(source_only_aot_namespace_paths)} "
-                        f"AOT-compiled namespaces from source-only JARs")
-
-        # Step 1.5: Add first-party source files when skip_aot=True
-        # (When AOT is enabled, first-party sources are compiled to classes)
-        if skip_aot and stripped_source_contents:
-            source_count = 0
-            for file_content in stripped_source_contents:
+            # Add first-party source files
+            for file_content in source_contents:
                 arcname = file_content.path
                 if arcname not in added_entries:
                     jar.writestr(arcname, file_content.content)
                     added_entries.add(arcname)
-                    source_count += 1
 
-            logger.info(f"Added {source_count} first-party source files for source-only JAR")
-
-        # Step 2: Extract dependency JAR contents (pre-collected during index build)
-        # All third-party content comes from here (.class, .clj, resources)
-        #
-        # IMPORTANT: For source-only libraries, we skip their source files (.clj/.cljc)
-        # because we've already included AOT-compiled classes in Step 1. Including both
-        # would risk class identity issues at runtime if the source gets reloaded.
-        source_files_skipped = 0
-        for arcname, data, is_source_only_jar in jar_entries_to_extract:
-            if arcname not in added_entries:
-                # Check if this is a source file from a source-only JAR that we've AOT compiled
-                if is_source_only_jar and (arcname.endswith('.clj') or arcname.endswith('.cljc')):
-                    # Convert source path to namespace path for checking
-                    # e.g., com/rpl/specter/impl.cljc -> com/rpl/specter/impl
-                    source_ns_path = arcname.rsplit('.', 1)[0]  # Remove .clj or .cljc extension
-                    # Clojure uses underscores in class names but hyphens in source files
-                    # We need to check both forms since our AOT paths use underscores
-                    source_ns_path_underscore = source_ns_path.replace('-', '_')
-                    if source_ns_path_underscore in source_only_aot_namespace_paths:
-                        # Skip this source file - we have AOT classes for it
-                        source_files_skipped += 1
+            # Extract and add contents from dependency JARs
+            for file_content in classpath_contents:
+                if file_content.path.endswith('.jar'):
+                    # Check if this JAR is from a provided dependency
+                    jar_filename = file_content.path.rsplit('/', 1)[-1]
+                    if any(jar_filename.startswith(prefix) for prefix in excluded_artifact_prefixes):
                         continue
-                jar.writestr(arcname, data)
-                added_entries.add(arcname)
 
-        if source_files_skipped > 0:
-            logger.info(f"Skipped {source_files_skipped} source files from source-only JARs "
-                       f"(using AOT classes instead to avoid class identity issues)")
+                    try:
+                        jar_bytes = io.BytesIO(file_content.content)
+                        with zipfile.ZipFile(jar_bytes, 'r') as dep_jar:
+                            for item in dep_jar.namelist():
+                                # Skip META-INF and LICENSE files
+                                if item.startswith('META-INF/'):
+                                    continue
+                                if item.upper().startswith('LICENSE'):
+                                    continue
+                                if item not in added_entries:
+                                    data = dep_jar.read(item)
+                                    jar.writestr(item, data)
+                                    added_entries.add(item)
+                    except Exception:
+                        pass
 
-    # Validate that the manifest's Main-Class is actually in the JAR
-    if not skip_aot:
-        main_class_path = main_class_name.replace('.', '/') + '.class'
-        if main_class_path not in added_entries:
-            raise ValueError(
-                f"Main class '{main_class_name}' was not found in the JAR.\n\n"
-                f"This usually means:\n"
-                f"  1. The namespace uses (:gen-class :name {main_class_name}) but the class wasn't detected\n"
-                f"  2. The main namespace wasn't properly compiled\n\n"
-                f"Expected class file: {main_class_path}\n"
-                f"First-party namespace paths: {sorted(first_party_namespace_paths)}\n"
-                f"First-party gen-class paths: {sorted(first_party_gen_class_paths)}\n\n"
-                f"If using (:gen-class :name X), ensure the pattern is on a single line "
-                f"and follows the format: (:gen-class :name fully.qualified.ClassName)"
+        # Create output
+        jar_bytes_data = jar_buffer.getvalue()
+        output_digest = await Get(
+            Digest,
+            CreateDigest([FileContent(output_filename, jar_bytes_data)]),
+        )
+
+        return BuiltPackage(
+            digest=output_digest,
+            artifacts=(BuiltPackageArtifact(relpath=output_filename),),
+        )
+
+    # =========================================================================
+    # AOT-compiled JAR path (delegate to tools.build)
+    # =========================================================================
+
+    # Get source files for validation
+    source_fields = []
+    for tgt in clojure_source_targets:
+        if tgt.has_field(ClojureSourceField):
+            source_fields.append(tgt[ClojureSourceField])
+        elif tgt.has_field(ClojureTestSourceField):
+            source_fields.append(tgt[ClojureTestSourceField])
+
+    if not source_fields:
+        raise ValueError(
+            f"No Clojure source files found for deploy jar at {field_set.address}.\n\n"
+            f"Ensure the target has dependencies on clojure_source targets."
+        )
+
+    source_files = await Get(
+        SourceFiles,
+        SourceFilesRequest(source_fields),
+    )
+
+    # Analyze source files to validate main namespace has (:gen-class)
+    namespace_analysis = await Get(
+        ClojureNamespaceAnalysis,
+        ClojureNamespaceAnalysisRequest(source_files.snapshot),
+    )
+    digest_contents = await Get(DigestContents, Digest, source_files.snapshot.digest)
+
+    # Validate main namespace has (:gen-class)
+    # Build reverse mapping: namespace -> file path
+    namespace_to_file = {ns: path for path, ns in namespace_analysis.namespaces.items()}
+    main_source_path = namespace_to_file.get(main_namespace)
+    main_source_file = None
+
+    if main_source_path:
+        for file_content in digest_contents:
+            if file_content.path == main_source_path:
+                main_source_file = file_content.content.decode("utf-8")
+                break
+
+    if not main_source_file:
+        raise ValueError(
+            f"Could not find source file for main namespace '{main_namespace}'.\n\n"
+            f"Common causes:\n"
+            f"  - Main namespace is not in the dependencies of this target\n"
+            f"  - Namespace name doesn't match the file path\n"
+            f"  - Missing (ns {main_namespace}) declaration in source file\n\n"
+            f"Troubleshooting:\n"
+            f"  1. Verify dependencies: pants dependencies {field_set.address}\n"
+            f"  2. Check file contains (ns {main_namespace}) declaration\n"
+            f"  3. Ensure the namespace follows Clojure naming conventions\n"
+        )
+
+    # Check for (:gen-class) in the namespace declaration
+    ns_with_gen_class = re.search(
+        r'\(ns\s+[\w.-]+.*?\(:gen-class',
+        main_source_file,
+        re.DOTALL,
+    )
+
+    if not ns_with_gen_class:
+        raise ValueError(
+            f"Main namespace '{main_namespace}' must include (:gen-class) in its ns declaration "
+            f"to be used as an entry point for an executable JAR.\n\n"
+            f"Example:\n"
+            f"(ns {main_namespace}\n"
+            f"  (:gen-class))\n\n"
+            f"(defn -main [& args]\n"
+            f"  (println \"Hello, World!\"))"
+        )
+
+    # Build address sets for classpaths
+    all_source_addresses = Addresses(tgt.address for tgt in clojure_source_targets)
+    runtime_source_addresses = Addresses(
+        addr for addr in all_source_addresses
+        if addr not in provided_deps.addresses
+    )
+
+    # Get both classpaths:
+    # - compile_classpath: ALL deps including provided (for AOT compilation)
+    # - runtime_classpath: Only runtime deps excluding provided (for packaging)
+    compile_classpath, runtime_classpath = await MultiGet(
+        Get(Classpath, Addresses, all_source_addresses),
+        Get(Classpath, Addresses, runtime_source_addresses),
+    )
+
+    # Get stripped source files for RUNTIME first-party code (excluding provided)
+    runtime_source_fields = [
+        tgt[ClojureSourceField] if tgt.has_field(ClojureSourceField)
+        else tgt[ClojureTestSourceField]
+        for tgt in clojure_source_targets
+        if tgt.address not in provided_deps.addresses
+    ]
+
+    # Get stripped source files for PROVIDED first-party code
+    # These are needed for compilation but should not be packaged
+    provided_source_fields = [
+        tgt[ClojureSourceField] if tgt.has_field(ClojureSourceField)
+        else tgt[ClojureTestSourceField]
+        for tgt in clojure_source_targets
+        if tgt.address in provided_deps.addresses
+    ]
+
+    # Get both sets of stripped sources
+    if runtime_source_fields:
+        stripped_runtime_sources = await Get(
+            StrippedSourceFiles,
+            SourceFilesRequest(
+                runtime_source_fields,
+                for_sources_types=(ClojureSourceField, ClojureTestSourceField),
+            ),
+        )
+        runtime_source_digest = stripped_runtime_sources.snapshot.digest
+    else:
+        runtime_source_digest = EMPTY_DIGEST
+
+    provided_namespaces: tuple[str, ...] = ()
+    if provided_source_fields:
+        # Get stripped sources for provided deps
+        stripped_provided_sources = await Get(
+            StrippedSourceFiles,
+            SourceFilesRequest(
+                provided_source_fields,
+                for_sources_types=(ClojureSourceField, ClojureTestSourceField),
+            ),
+        )
+        provided_source_digest = stripped_provided_sources.snapshot.digest
+
+        # Analyze provided sources to get their namespace names (for exclusion patterns)
+        provided_source_files = await Get(
+            SourceFiles,
+            SourceFilesRequest(provided_source_fields),
+        )
+        provided_ns_analysis = await Get(
+            ClojureNamespaceAnalysis,
+            ClojureNamespaceAnalysisRequest(provided_source_files.snapshot),
+        )
+        provided_namespaces = tuple(provided_ns_analysis.namespaces.values())
+    else:
+        provided_source_digest = EMPTY_DIGEST
+
+    # Extract main class (handles :gen-class :name if present)
+    main_class = extract_main_class(main_namespace, main_source_file)
+
+    # Compute JAR prefixes for provided third-party dependencies
+    # Format: "groupId_artifactId_" (matches Coursier JAR naming)
+    provided_jar_prefixes = tuple(
+        f"{group}_{artifact}_"
+        for group, artifact in provided_deps.coordinates
+    )
+
+    # Build uberjar with tools.build
+    result = await Get(
+        ToolsBuildUberjarResult,
+        ToolsBuildUberjarRequest(
+            main_namespace=main_namespace,
+            main_class=main_class,
+            compile_classpath=compile_classpath,
+            runtime_classpath=runtime_classpath,
+            source_digest=runtime_source_digest,
+            provided_source_digest=provided_source_digest,
+            provided_namespaces=provided_namespaces,
+            provided_jar_prefixes=provided_jar_prefixes,
+            jdk=field_set.jdk,
+        ),
+    )
+
+    # Rename output JAR to desired filename
+    if result.jar_path == output_filename:
+        # No rename needed
+        final_digest = result.digest
+    else:
+        # Read the JAR contents and write with new name
+        jar_contents = await Get(DigestContents, Digest, result.digest)
+        if jar_contents:
+            final_digest = await Get(
+                Digest,
+                CreateDigest([FileContent(output_filename, jar_contents[0].content)]),
             )
-
-    # Create the output digest with the JAR file
-    jar_bytes = jar_buffer.getvalue()
-    output_digest = await Get(
-        Digest,
-        CreateDigest([FileContent(output_filename, jar_bytes)]),
-    )
-
-    # Return the built JAR
-    artifact = BuiltPackageArtifact(
-        relpath=output_filename,
-    )
+        else:
+            raise Exception("tools.build produced no output")
 
     return BuiltPackage(
-        digest=output_digest,
-        artifacts=(artifact,),
+        digest=final_digest,
+        artifacts=(BuiltPackageArtifact(relpath=output_filename),),
     )
 
 

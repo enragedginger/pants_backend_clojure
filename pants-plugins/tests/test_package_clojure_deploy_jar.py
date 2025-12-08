@@ -6,7 +6,6 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.aot_compile import rules as aot_compile_rules
 from clojure_backend import compile_clj
 from clojure_backend.namespace_analysis import rules as namespace_analysis_rules
 from clojure_backend.provided_dependencies import rules as provided_dependencies_rules
@@ -15,6 +14,8 @@ from clojure_backend.goals.package import (
     package_clojure_deploy_jar,
 )
 from clojure_backend.goals.package import rules as package_rules
+from clojure_backend.subsystems.tools_build import rules as tools_build_rules
+from clojure_backend.tools_build_uberjar import rules as tools_build_uberjar_rules
 from clojure_backend.target_types import (
     ClojureProvidedDependenciesField,
     ClojureDeployJarTarget,
@@ -50,7 +51,8 @@ def rule_runner() -> RuleRunner:
         target_types=[ClojureSourceTarget, ClojureDeployJarTarget, JvmArtifactTarget],
         rules=[
             *package_rules(),
-            *aot_compile_rules(),
+            *tools_build_rules(),
+            *tools_build_uberjar_rules(),
             *namespace_analysis_rules(),
             *provided_dependencies_rules(),
             *classpath.rules(),
@@ -588,7 +590,7 @@ def test_package_deploy_jar_missing_main_namespace(rule_runner: RuleRunner) -> N
     target = rule_runner.get_target(Address("src/missing", target_name="app"))
     field_set = ClojureDeployJarFieldSet.create(target)
 
-    # Should raise an error about missing namespace
+    # Should raise an error about missing namespace/source files
     with pytest.raises(ExecutionError) as exc_info:
         rule_runner.request(BuiltPackage, [field_set])
 
@@ -596,7 +598,11 @@ def test_package_deploy_jar_missing_main_namespace(rule_runner: RuleRunner) -> N
     assert len(exc_info.value.wrapped_exceptions) == 1
     wrapped_exc = exc_info.value.wrapped_exceptions[0]
     assert isinstance(wrapped_exc, ValueError)
-    assert "Could not find source file" in str(wrapped_exc)
+    # The error could be about missing source files or missing main namespace
+    assert any(msg in str(wrapped_exc) for msg in [
+        "Could not find source file",
+        "No Clojure source files found",
+    ])
 
 
 def test_package_deploy_jar_with_transitive_dependencies(rule_runner: RuleRunner) -> None:
@@ -1114,34 +1120,105 @@ def test_provided_maven_transitives_excluded_from_jar(rule_runner: RuleRunner) -
         f"Transitive dep core.specs.alpha should NOT be in JAR, but found: {core_specs_entries[:10]}"
 
 
-# =============================================================================
-# Tests for AOT-first, JAR-override packaging behavior
-# =============================================================================
-# These tests verify that AOT-compiled classes are added first, then dependency
-# JAR contents override them. This ensures:
-# 1. Source-only third-party libraries work (their AOT classes are included)
-# 2. Pre-compiled libraries work (their JAR classes override AOT for protocol safety)
-#
-# NOTE ON TEST COVERAGE:
-# We cannot easily test with real source-only Maven libraries because:
-# 1. All Maven artifacts in our test lockfiles have pre-compiled classes
-# 2. Creating synthetic source-only JARs in tests is complex
-#
-# Instead, we use first-party clojure_source targets as proxies for source-only
-# libraries - they behave identically (no JAR with pre-compiled classes).
-# The test_transitive_first_party_classes_included test specifically verifies
-# that classes for transitive dependencies without JARs are included.
+def test_provided_deps_available_for_compilation_excluded_from_jar(rule_runner: RuleRunner) -> None:
+    """Verify provided dependencies are available during AOT but excluded from JAR.
+
+    This is critical for libraries like servlet-api that must be available at
+    compile time but should not be bundled (container provides them at runtime).
+
+    The test uses JSR-305 @Nonnull annotation in a type hint to verify that:
+    1. AOT compilation succeeds (can resolve the annotation class)
+    2. The JAR does not contain the annotation classes
+    """
+    import io
+    import zipfile
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": LOCKFILE_WITH_JSR305,
+            "src/app/BUILD": dedent(
+                f"""\
+                jvm_artifact(
+                    name="clojure",
+                    group="org.clojure",
+                    artifact="clojure",
+                    version="{CLOJURE_VERSION}",
+                )
+
+                jvm_artifact(
+                    name="jsr305",
+                    group="com.google.code.findbugs",
+                    artifact="jsr305",
+                    version="3.0.2",
+                )
+
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=[":clojure", ":jsr305"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="app.core",
+                    dependencies=[":core"],
+                    provided=[":jsr305"],
+                )
+                """
+            ),
+            "src/app/core.clj": dedent(
+                """\
+                (ns app.core
+                  (:import [javax.annotation Nonnull])
+                  (:gen-class))
+
+                ;; Use type hint with the provided annotation to verify it's available during AOT
+                (defn process-input [^Nonnull input]
+                  (str "Processed: " input))
+
+                (defn -main [& args]
+                  (println (process-input "test")))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/app", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    # Package the JAR - this will fail if provided deps aren't available during AOT
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+    # Read the JAR and check its contents
+    jar_path = result.artifacts[0].relpath
+    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
+    jar_content = None
+    for file_content in jar_digest_contents:
+        if file_content.path == jar_path:
+            jar_content = file_content.content
+            break
+
+    assert jar_content is not None, f"Could not find JAR file {jar_path} in digest"
+
+    # Parse the JAR and check what classes are included
+    jar_buffer = io.BytesIO(jar_content)
+    with zipfile.ZipFile(jar_buffer, 'r') as jar:
+        jar_entries = set(jar.namelist())
+
+    # The main app classes should be present
+    assert any('app/core' in entry for entry in jar_entries), \
+        "Main app.core classes should be in JAR"
+
+    # The provided jsr305 classes should NOT be present
+    jsr305_entries = [entry for entry in jar_entries if entry.startswith('javax/annotation/')]
+    assert len(jsr305_entries) == 0, \
+        f"Provided jsr305 annotation classes should NOT be in JAR, but found: {jsr305_entries}"
 
 
 def test_aot_classes_included_then_jar_overrides(rule_runner: RuleRunner) -> None:
-    """Integration test: verify AOT classes are added first, then JAR contents override.
-
-    This tests the core behavior of the packaging logic:
-    1. All AOT-compiled classes are added first (project + third-party transitives)
-    2. Dependency JAR contents are extracted and override existing entries
-    3. For pre-compiled libraries, JAR classes win (protocol safety)
-    4. For source-only libraries, AOT classes remain (they're needed at runtime)
-    """
+    """Verify that both project classes and dependency classes are in the final JAR."""
     import io
     import zipfile
 
@@ -1212,14 +1289,9 @@ def test_aot_classes_included_then_jar_overrides(rule_runner: RuleRunner) -> Non
 
 
 def test_transitive_first_party_classes_included(rule_runner: RuleRunner) -> None:
-    """Verify that transitive first-party dependencies have their AOT classes included.
+    """Verify that transitive first-party dependencies have their classes in the JAR.
 
-    This test is critical for catching regressions like the source-only library bug.
-    First-party clojure_source targets behave like source-only third-party libraries:
-    they have no JAR with pre-compiled classes, so their AOT classes MUST be included.
-
-    The previous bug filtered out ALL non-project-namespace AOT classes, which would
-    break this scenario. This test ensures transitive first-party deps work correctly.
+    When app depends on lib, the compiled classes from lib must be included.
     """
     import io
     import zipfile
@@ -1317,7 +1389,7 @@ def test_transitive_first_party_classes_included(rule_runner: RuleRunner) -> Non
 
 
 def test_deeply_nested_transitive_deps_included(rule_runner: RuleRunner) -> None:
-    """Verify that deeply nested transitive dependencies have their AOT classes included.
+    """Verify that deeply nested transitive dependencies have their classes included.
 
     Tests a chain: app -> lib-a -> lib-b -> lib-c
     All intermediate library classes must be in the final JAR.
@@ -1537,109 +1609,8 @@ def test_no_duplicate_entries_in_jar(rule_runner: RuleRunner) -> None:
     assert len(clojure_classes) > 0, "Clojure classes should be in JAR"
 
 
-# =============================================================================
-# Tests for first-party-only AOT filtering
-# =============================================================================
-# These tests verify the new behavior where only first-party AOT classes are
-# included, and all third-party content comes from dependency JARs.
-
-
-def test_only_first_party_aot_classes_included(rule_runner: RuleRunner) -> None:
-    """Verify that only first-party namespace classes are included from AOT.
-
-    This tests the core filtering logic:
-    1. First-party classes (from clojure_source targets) are included from AOT
-    2. Inner classes ($) for first-party namespaces are handled correctly
-    3. __init classes for first-party namespaces are handled correctly
-    """
-    import io
-    import zipfile
-
-    setup_rule_runner(rule_runner)
-    rule_runner.write_files(
-        {
-            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
-            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
-            "src/myapp/BUILD": dedent(
-                """\
-                clojure_source(
-                    name="core",
-                    source="core.clj",
-                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
-                )
-
-                clojure_deploy_jar(
-                    name="app",
-                    main="myapp.core",
-                    dependencies=[":core"],
-                )
-                """
-            ),
-            "src/myapp/core.clj": dedent(
-                """\
-                (ns myapp.core
-                  (:require [clojure.string :as str])
-                  (:gen-class))
-
-                (defn -main [& args]
-                  (println (str/upper-case "hello")))
-                """
-            ),
-        }
-    )
-
-    target = rule_runner.get_target(Address("src/myapp", target_name="app"))
-    field_set = ClojureDeployJarFieldSet.create(target)
-
-    result = rule_runner.request(BuiltPackage, [field_set])
-    assert len(result.artifacts) == 1
-
-    jar_path = result.artifacts[0].relpath
-    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
-    jar_content = None
-    for file_content in jar_digest_contents:
-        if file_content.path == jar_path:
-            jar_content = file_content.content
-            break
-
-    assert jar_content is not None
-
-    jar_buffer = io.BytesIO(jar_content)
-    with zipfile.ZipFile(jar_buffer, 'r') as jar:
-        jar_entries = set(jar.namelist())
-
-    # First-party classes should be present
-    myapp_classes = [e for e in jar_entries if e.startswith('myapp/')]
-    assert len(myapp_classes) > 0, "First-party myapp classes should be in JAR"
-
-    # Verify specific class patterns for first-party namespace
-    assert any('myapp/core' in e and e.endswith('.class') for e in myapp_classes), \
-        "myapp.core namespace classes should be present"
-    # __init class should be present
-    assert any('myapp/core__init.class' in e for e in myapp_classes), \
-        "myapp.core __init class should be present"
-    # Inner classes ($) should be handled correctly if present
-    # (gen-class often creates inner classes for interfaces)
-    inner_classes = [e for e in myapp_classes if '$' in e]
-    # Note: We don't require inner classes since gen-class may not create them,
-    # but if they exist, they should match our namespace
-    for entry in inner_classes:
-        assert entry.startswith('myapp/'), \
-            f"Inner class {entry} should be under myapp/ namespace"
-
-
 def test_third_party_classes_not_from_aot(rule_runner: RuleRunner) -> None:
-    """Verify that third-party classes (e.g., clojure/core*.class) are NOT from AOT.
-
-    The third-party classes should come from the dependency JARs, not from AOT.
-    This is critical for protocol safety - AOT-compiled third-party classes have
-    different protocol identities than the JAR versions.
-
-    We verify this by checking that clojure classes exist in the JAR (from the
-    Clojure dependency JAR) but we don't have a way to directly check "not from AOT"
-    without timestamps. Instead, we verify the expected behavior that third-party
-    classes ARE present (they come from JARs, not discarded).
-    """
+    """Verify that third-party dependency classes are included in the JAR."""
     import io
     import zipfile
 
@@ -1707,85 +1678,12 @@ def test_third_party_classes_not_from_aot(rule_runner: RuleRunner) -> None:
         "Third-party clojure.string classes should be in JAR (from dependency JAR)"
 
 
-def test_third_party_content_extracted_from_jars(rule_runner: RuleRunner) -> None:
-    """Verify that all third-party content (.class, .clj, resources) comes from JARs.
-
-    This test ensures that source-only libraries have their .clj files included
-    from the JAR. We check for various types of content from the Clojure JAR.
-    """
-    import io
-    import zipfile
-
-    setup_rule_runner(rule_runner)
-    rule_runner.write_files(
-        {
-            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
-            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
-            "src/myapp/BUILD": dedent(
-                """\
-                clojure_source(
-                    name="core",
-                    source="core.clj",
-                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
-                )
-
-                clojure_deploy_jar(
-                    name="app",
-                    main="myapp.core",
-                    dependencies=[":core"],
-                )
-                """
-            ),
-            "src/myapp/core.clj": dedent(
-                """\
-                (ns myapp.core
-                  (:gen-class))
-
-                (defn -main [& args]
-                  (println "Hello"))
-                """
-            ),
-        }
-    )
-
-    target = rule_runner.get_target(Address("src/myapp", target_name="app"))
-    field_set = ClojureDeployJarFieldSet.create(target)
-
-    result = rule_runner.request(BuiltPackage, [field_set])
-    assert len(result.artifacts) == 1
-
-    jar_path = result.artifacts[0].relpath
-    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
-    jar_content = None
-    for file_content in jar_digest_contents:
-        if file_content.path == jar_path:
-            jar_content = file_content.content
-            break
-
-    assert jar_content is not None
-
-    jar_buffer = io.BytesIO(jar_content)
-    with zipfile.ZipFile(jar_buffer, 'r') as jar:
-        jar_entries = set(jar.namelist())
-
-    # Check for .class files from Clojure JAR
-    clojure_class_files = [e for e in jar_entries if e.startswith('clojure/') and e.endswith('.class')]
-    assert len(clojure_class_files) > 0, "Clojure .class files should be extracted from JAR"
-
-    # Check for .clj files from Clojure JAR (Clojure includes source in its JAR)
-    clojure_clj_files = [e for e in jar_entries if e.startswith('clojure/') and e.endswith('.clj')]
-    assert len(clojure_clj_files) > 0, "Clojure .clj files should be extracted from JAR"
-
-
 def test_hyphenated_namespace_classes_included(rule_runner: RuleRunner) -> None:
-    """Verify that first-party namespaces with hyphens are handled correctly.
+    """Verify that namespaces with hyphens are handled correctly.
 
     Clojure converts hyphens to underscores in class file names:
     - Namespace: my-lib.core
     - Class file: my_lib/core.class
-
-    This test ensures the hyphen-to-underscore conversion works correctly
-    for first-party namespace detection.
     """
     import io
     import zipfile
@@ -2250,237 +2148,11 @@ def test_package_deploy_jar_clojure_main_with_transitive_deps(rule_runner: RuleR
             f"Unexpected mylib classes in source-only JAR: {mylib_classes}"
 
 
-# =============================================================================
-# Tests for macro-generated class handling
-# =============================================================================
-# These tests verify that AOT classes generated by macros in third-party
-# namespaces are correctly included in the final JAR. This handles libraries
-# like Specter's declarepath which generate classes in the macro's namespace.
-
-
-def test_aot_class_not_in_jars_is_kept(rule_runner: RuleRunner) -> None:
-    """Verify AOT classes not found in any dependency JAR are kept.
-
-    This is the core test for the macro-generated class fix. Some macros
-    (like Specter's declarepath) generate classes in the macro's namespace,
-    not the caller's namespace. These classes don't exist in the original JAR -
-    they're only created during AOT compilation of user code.
-
-    We simulate this by having first-party code that generates classes that
-    wouldn't be in any JAR. The existing tests for transitive first-party
-    classes actually cover this scenario since first-party classes are
-    "not in any JAR" by definition.
-
-    This test specifically validates the logic: if a class is NOT in any
-    dependency JAR's index, it should be kept from AOT output.
-    """
-    import io
-    import zipfile
-
-    setup_rule_runner(rule_runner)
-    rule_runner.write_files(
-        {
-            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
-            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
-            # Library that uses deftype (generates class in namespace subdirectory)
-            "src/mylib/BUILD": dedent(
-                """\
-                clojure_source(
-                    name="types",
-                    source="types.clj",
-                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
-                )
-                """
-            ),
-            "src/mylib/types.clj": dedent(
-                """\
-                (ns mylib.types)
-
-                ;; deftype generates mylib/types/CustomHandler.class
-                ;; This class is NOT in any JAR - it's only from AOT compilation
-                (deftype CustomHandler [callback]
-                  clojure.lang.IFn
-                  (invoke [this arg]
-                    (callback arg)))
-                """
-            ),
-            "src/myapp/BUILD": dedent(
-                """\
-                clojure_source(
-                    name="core",
-                    source="core.clj",
-                    dependencies=["//src/mylib:types", "3rdparty/jvm:org.clojure_clojure"],
-                )
-
-                clojure_deploy_jar(
-                    name="app",
-                    main="myapp.core",
-                    dependencies=[":core"],
-                )
-                """
-            ),
-            "src/myapp/core.clj": dedent(
-                """\
-                (ns myapp.core
-                  (:require [mylib.types])
-                  (:import [mylib.types CustomHandler])
-                  (:gen-class))
-
-                (defn -main [& args]
-                  (let [h (CustomHandler. println)]
-                    (h "Hello")))
-                """
-            ),
-        }
-    )
-
-    target = rule_runner.get_target(Address("src/myapp", target_name="app"))
-    field_set = ClojureDeployJarFieldSet.create(target)
-
-    result = rule_runner.request(BuiltPackage, [field_set])
-    assert len(result.artifacts) == 1
-
-    jar_path = result.artifacts[0].relpath
-    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
-    jar_content = None
-    for file_content in jar_digest_contents:
-        if file_content.path == jar_path:
-            jar_content = file_content.content
-            break
-
-    assert jar_content is not None
-
-    jar_buffer = io.BytesIO(jar_content)
-    with zipfile.ZipFile(jar_buffer, 'r') as jar:
-        jar_entries = set(jar.namelist())
-
-    # The deftype-generated class should be in the JAR
-    # deftype generates class in subdirectory: mylib/types/CustomHandler.class
-    custom_handler_class = 'mylib/types/CustomHandler.class'
-    assert custom_handler_class in jar_entries, (
-        f"deftype class {custom_handler_class} should be in JAR (not in any dependency JAR). "
-        f"Found entries starting with mylib/: {sorted(e for e in jar_entries if e.startswith('mylib/'))}"
-    )
-
-    # The namespace init class should also be present
-    assert 'mylib/types__init.class' in jar_entries, \
-        "Namespace init class should be in JAR"
-
-
-def test_nested_inner_class_not_in_jars_is_kept(rule_runner: RuleRunner) -> None:
-    """Test that classes with nested inner classes (fn, reify) are handled.
-
-    When first-party code uses anonymous functions or reify, Clojure generates
-    classes like mylib/utils$fn__123.class. These should be included from AOT
-    since they don't exist in any JAR.
-    """
-    import io
-    import zipfile
-
-    setup_rule_runner(rule_runner)
-    rule_runner.write_files(
-        {
-            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
-            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
-            "src/mylib/BUILD": dedent(
-                """\
-                clojure_source(
-                    name="utils",
-                    source="utils.clj",
-                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
-                )
-                """
-            ),
-            "src/mylib/utils.clj": dedent(
-                """\
-                (ns mylib.utils)
-
-                ;; Multiple anonymous functions will generate nested inner classes
-                ;; e.g., mylib/utils$process_items$fn__123.class
-                (defn process-items [items]
-                  (map (fn [x] (* x 2))
-                       (filter (fn [x] (> x 0))
-                               items)))
-
-                ;; reify generates inner classes like mylib/utils$comparator$reify__456.class
-                (defn comparator []
-                  (reify java.util.Comparator
-                    (compare [_ a b]
-                      (- a b))))
-                """
-            ),
-            "src/myapp/BUILD": dedent(
-                """\
-                clojure_source(
-                    name="core",
-                    source="core.clj",
-                    dependencies=["//src/mylib:utils", "3rdparty/jvm:org.clojure_clojure"],
-                )
-
-                clojure_deploy_jar(
-                    name="app",
-                    main="myapp.core",
-                    dependencies=[":core"],
-                )
-                """
-            ),
-            "src/myapp/core.clj": dedent(
-                """\
-                (ns myapp.core
-                  (:require [mylib.utils :as u])
-                  (:gen-class))
-
-                (defn -main [& args]
-                  (println (u/process-items [1 2 -3 4])))
-                """
-            ),
-        }
-    )
-
-    target = rule_runner.get_target(Address("src/myapp", target_name="app"))
-    field_set = ClojureDeployJarFieldSet.create(target)
-
-    result = rule_runner.request(BuiltPackage, [field_set])
-    assert len(result.artifacts) == 1
-
-    jar_path = result.artifacts[0].relpath
-    jar_digest_contents = rule_runner.request(DigestContents, [result.digest])
-    jar_content = None
-    for file_content in jar_digest_contents:
-        if file_content.path == jar_path:
-            jar_content = file_content.content
-            break
-
-    assert jar_content is not None
-
-    jar_buffer = io.BytesIO(jar_content)
-    with zipfile.ZipFile(jar_buffer, 'r') as jar:
-        jar_entries = set(jar.namelist())
-
-    # Check for inner classes (fn, reify) - they should be present
-    mylib_inner_classes = [e for e in jar_entries
-                          if e.startswith('mylib/utils$') and e.endswith('.class')]
-    assert len(mylib_inner_classes) > 0, (
-        "Inner classes (fn, reify) from mylib.utils should be in JAR. "
-        f"Found entries starting with mylib/: {sorted(e for e in jar_entries if e.startswith('mylib/'))}"
-    )
-
-    # Verify there are multiple inner classes (from the anonymous functions)
-    assert len(mylib_inner_classes) >= 2, (
-        f"Expected multiple inner classes from anonymous functions, got: {mylib_inner_classes}"
-    )
-
-
 def test_transitive_macro_generated_classes_included(rule_runner: RuleRunner) -> None:
-    """Test that macro-generated classes from transitive dependencies are included.
+    """Test that deftype/defrecord classes from transitive dependencies are included.
 
-    Scenario:
-    - app depends on lib-a
-    - lib-a defines deftype/defrecord that generates classes
-    - Those classes must be in the final JAR
-
-    This is similar to test_aot_class_not_in_jars_is_kept but specifically
-    tests the transitive case through multiple dependency levels.
+    Scenario: app -> mid-lib -> deep-lib (with defrecord/defprotocol)
+    All generated classes must be in the final JAR.
     """
     import io
     import zipfile

@@ -16,10 +16,30 @@ These workarounds are fragile and continue to cause bugs (like the recent Specte
 
 Delegate AOT compilation and uberjar creation to **tools.build**, which is the official Clojure tooling and handles these complexities correctly.
 
-**Key simplification**: Pants/Coursier already resolves all dependencies. We don't need tools.deps at all. We simply:
+**Key simplification**: Pants/Coursier already resolves all dependencies. We don't need tools.deps for dependency resolution. We simply:
 1. Lay out compile-time JARs in one directory
 2. Lay out runtime JARs (excluding provided) in another directory
 3. Pass these directories to tools.build as pre-resolved classpaths
+
+**Important: Three Distinct Classpaths**
+
+There are THREE separate classpaths involved in this process:
+
+1. **tools.build execution classpath** (for running the build script itself):
+   - `io.github.clojure:tools.build` and its transitive dependencies
+   - Coursier automatically resolves: Clojure, tools.deps, tools.namespace, slf4j-nop
+   - This is the classpath for `java -cp <tools-classpath> clojure.main build.clj`
+
+2. **Application compile classpath** (for AOT-compiling the user's code):
+   - User's source files + ALL dependency JARs (including provided)
+   - Needed because the Clojure compiler must load all required namespaces
+   - Passed to tools.build via `:classpath-roots` in the basis
+
+3. **Application runtime classpath** (for packaging the uberjar):
+   - User's source files + runtime dependency JARs (excluding provided)
+   - This is what actually goes into the final JAR
+
+tools.build maintains classpath isolation by forking a **new JVM process** when running `compile-clj`. The basis's `:classpath-roots` become the classpath for this compilation subprocess, completely separate from the tools.build execution classpath.
 
 ```clojure
 ;; No tools.deps needed - Pants provides the classpaths
@@ -54,7 +74,7 @@ Behavior:
 
 ---
 
-## Phase 1: Create tools.build Integration Infrastructure
+## Phase 1: Create tools.build Integration Infrastructure [COMPLETED]
 
 ### Goal
 Establish the ability to invoke tools.build from Pants, fetching it as a dependency.
@@ -80,7 +100,7 @@ class ToolsBuildSubsystem(Subsystem):
     )
 ```
 
-**Note**: We do NOT need tools.deps. Pants handles all dependency resolution.
+**Note**: We don't need tools.deps for dependency resolution (Pants/Coursier handles that). However, tools.deps IS included as a transitive dependency of tools.build and will be fetched automatically by Coursier.
 
 #### 1.2 Create a rule to fetch tools.build classpath
 
@@ -99,8 +119,11 @@ async def get_tools_build_classpath(
                 ArtifactRequirement(Coordinate(
                     "io.github.clojure", "tools.build", tools_build.version
                 )),
-                # tools.build pulls in what it needs transitively
-                # No need to explicitly add tools.deps
+                # Coursier resolves transitive deps automatically:
+                # - org.clojure:clojure (required to run clojure.main)
+                # - org.clojure:tools.deps (tools.build dependency)
+                # - org.clojure:tools.namespace
+                # - org.slf4j:slf4j-nop
             ]),
         ),
     )
@@ -111,7 +134,190 @@ async def get_tools_build_classpath(
 - Rule to fetch tools.build classpath
 
 ### Validation
-- Unit test that tools.build can be fetched
+- Unit test that tools.build can be fetched (exists at `test_tools_build.py`)
+- **Enhancement needed**: Update test to verify transitive deps are included (Clojure JAR should be in classpath)
+
+---
+
+## Phase 1.5: Test Cleanup (Required Before Phase 2) [COMPLETED]
+
+### Problem Statement
+
+The current test file `test_package_clojure_deploy_jar.py` is 2599 lines long and contains many tests that specifically verify the complex filtering logic that we're eliminating:
+
+- First-party vs third-party class detection
+- AOT-first, JAR-override packaging strategy
+- Source-only JAR detection and namespace path tracking
+- `is_first_party_class()` / `is_provided_class()` / `get_namespace_path_from_class()` functions
+
+These implementation-specific tests caused confusion during the Phase 2 implementation attempt because they test internal mechanics that will no longer exist after simplification.
+
+### Goal
+
+Remove or simplify tests that are tied to the complex filtering logic before implementing Phase 2, so the new implementation isn't constrained by outdated test expectations.
+
+### Test Analysis
+
+#### Tests to SIMPLIFY or REMOVE
+
+**IMPORTANT**: Per plan review feedback, prefer SIMPLIFYING tests to verify JAR contents (behavior) rather than removing them entirely. Only remove tests that are purely about internal implementation mechanics.
+
+| Test Name | Lines | Action | Reason |
+|-----------|-------|--------|--------|
+| `test_only_first_party_aot_classes_included` | 1547-1628 | SIMPLIFY | Keep assertion that app classes are in JAR; remove `is_first_party_class()` specific checks |
+| `test_third_party_content_extracted_from_jars` | 1710-1777 | SIMPLIFY | Keep assertion that third-party classes are in JAR; remove extraction implementation details |
+| `test_aot_class_not_in_jars_is_kept` | 2261-2367 | KEEP | Verifies macro-generated classes are in final JAR (behavior we need tools.build to match) |
+| `test_nested_inner_class_not_in_jars_is_kept` | 2370-2471 | KEEP | Verifies inner classes are in final JAR (behavior we need tools.build to match) |
+
+The macro-generated class tests are particularly important because they verify that tools.build produces the same output as our current implementation. Keep them as behavior validation.
+
+#### Tests to SIMPLIFY (keep end-to-end behavior, remove implementation checks):
+
+| Test Name | Lines | Simplification |
+|-----------|-------|---------------|
+| `test_aot_classes_included_then_jar_overrides` | 1136-1211 | Keep assertions (project + clojure classes in JAR), simplify docstring |
+| `test_transitive_first_party_classes_included` | 1214-1316 | Keep but just verify classes exist, remove comments about filtering |
+| `test_deeply_nested_transitive_deps_included` | 1319-1443 | Keep basic verification |
+| `test_third_party_classes_not_from_aot` | 1631-1707 | Keep assertions (third-party classes exist), remove "from JARs not AOT" details |
+| `test_hyphenated_namespace_classes_included` | 1780-1871 | Keep but remove filtering-specific comments |
+| `test_transitive_macro_generated_classes_included` | 2474-2600 | Keep basic verification |
+
+#### Tests to KEEP as-is (test end behavior, not implementation):
+
+- `test_package_simple_deploy_jar` - Basic packaging
+- `test_package_deploy_jar_validates_gen_class` - Input validation
+- `test_clojure_main_namespace_field_required` - Field validation
+- `test_clojure_deploy_jar_target_has_required_fields` - Target type validation
+- `test_package_deploy_jar_with_custom_gen_class_name` - gen-class :name handling
+- `test_package_deploy_jar_multiple_gen_class_names` - Multiple gen-class declarations
+- `test_package_deploy_jar_gen_class_without_name` - Standard gen-class
+- `test_package_deploy_jar_gen_class_name_after_other_options` - Complex gen-class parsing
+- `test_package_deploy_jar_with_defrecord_deftype` - defrecord/deftype handling
+- `test_package_deploy_jar_missing_main_namespace` - Error handling
+- `test_package_deploy_jar_with_transitive_dependencies` - Transitive deps
+- `test_provided_field_can_be_parsed` - Field parsing
+- `test_provided_dependencies_excluded_from_jar` - Provided deps exclusion (keep!)
+- `test_provided_jvm_artifact_excluded_from_jar` - Third-party provided
+- `test_transitive_maven_deps_included_in_jar` - Maven transitives included
+- `test_provided_maven_transitives_excluded_from_jar` - Provided Maven transitives
+- `test_hyphenated_main_namespace` - Hyphenated namespaces
+- `test_no_duplicate_entries_in_jar` - No duplicates (keep - behavior verification)
+- All `clojure.main` source-only tests (4 tests)
+
+### Tasks
+
+#### 1.5.0 Verify Phase 1 completeness
+
+Before starting test cleanup, confirm Phase 1 deliverables exist:
+- [x] `tools_build.py` subsystem exists at `pants-plugins/clojure_backend/subsystems/tools_build.py`
+- [x] Rule to fetch tools.build classpath exists (`ToolsBuildClasspathRequest`)
+- [x] Unit tests exist at `pants-plugins/tests/test_tools_build.py`
+- [x] Subsystem registered in `register.py`
+
+#### 1.5.1 Simplify implementation-specific tests
+
+Simplify these tests to verify JAR contents without testing internal mechanics:
+
+```python
+# SIMPLIFY: Keep assertions about what's in the JAR, remove implementation details
+test_only_first_party_aot_classes_included  # Keep: verify app classes in JAR
+test_third_party_content_extracted_from_jars  # Keep: verify third-party classes in JAR
+
+# KEEP AS-IS: These verify behavior that tools.build must match
+test_aot_class_not_in_jars_is_kept  # Critical: macro-generated classes must be in JAR
+test_nested_inner_class_not_in_jars_is_kept  # Critical: inner classes must be in JAR
+```
+
+Update section header comments to be behavior-focused:
+- Lines 1117-1134: Change to "Tests for JAR contents" (remove "AOT-first, JAR-override")
+- Lines 1540-1545: Change to "Tests for application classes in JAR"
+- Lines 2253-2259: Change to "Tests for macro-generated classes in JAR"
+
+#### 1.5.2 Simplify retained tests
+
+Update 6 tests that verify behavior but have implementation-specific docstrings:
+
+**test_aot_classes_included_then_jar_overrides:**
+```python
+# BEFORE:
+"""Integration test: verify AOT classes are added first, then JAR contents override.
+This tests the core behavior of the packaging logic:
+1. All AOT-compiled classes are added first (project + third-party transitives)
+2. Dependency JAR contents are extracted and override existing entries
+...
+"""
+
+# AFTER:
+"""Verify that both project classes and dependency classes are in the final JAR."""
+```
+
+**test_transitive_first_party_classes_included:**
+```python
+# BEFORE:
+"""Verify that transitive first-party dependencies have their AOT classes included.
+This test is critical for catching regressions like the source-only library bug...
+"""
+
+# AFTER:
+"""Verify that transitive first-party dependencies have their classes in the JAR.
+When app depends on lib, the compiled classes from lib must be included.
+"""
+```
+
+**test_third_party_classes_not_from_aot:**
+```python
+# BEFORE:
+"""Verify that third-party classes (e.g., clojure/core*.class) are NOT from AOT.
+The third-party classes should come from the dependency JARs, not from AOT...
+"""
+
+# AFTER:
+"""Verify that third-party dependency classes are included in the JAR."""
+```
+
+Apply similar simplifications to:
+- `test_deeply_nested_transitive_deps_included`
+- `test_hyphenated_namespace_classes_included`
+- `test_transitive_macro_generated_classes_included`
+
+#### 1.5.3 Add missing critical test
+
+Add a test to verify provided deps are available during compilation:
+
+```python
+def test_provided_deps_available_for_compilation_excluded_from_jar(rule_runner: RuleRunner) -> None:
+    """Verify provided dependencies are available during AOT but excluded from JAR.
+
+    This is critical for libraries like servlet-api that must be available at
+    compile time but should not be bundled (container provides them at runtime).
+    """
+    # Create app that uses type hints or imports from a provided dependency
+    # Assert: AOT compilation succeeds
+    # Assert: JAR does not contain provided dependency classes
+```
+
+This test validates the two-classpath approach (compile-libs vs uber-libs) in Phase 2.
+
+#### 1.5.4 Verify tests pass after cleanup
+
+After making changes, run retained tests:
+```bash
+pants test pants-plugins/tests/test_package_clojure_deploy_jar.py
+```
+
+All retained tests must pass with the current implementation before proceeding to Phase 2.
+
+### Deliverables
+- Simplified test file with behavior-focused tests
+- All tests now verify **what** the JAR contains, not **how** it's created
+- Updated test docstrings without references to filtering logic
+- New test for provided deps during compilation
+- Macro-generated class tests preserved (critical for tools.build behavior validation)
+
+### Validation
+- All tests pass with current implementation
+- No test docstrings reference "first-party filtering", "AOT-first", "JAR-override", "source-only library detection", or "two-phase scanning"
+- Critical behavior tests (macro-generated classes, inner classes) still exist and pass
 
 ---
 
@@ -119,6 +325,38 @@ async def get_tools_build_classpath(
 
 ### Goal
 Create a single rule that invokes tools.build to perform both AOT compilation AND uberjar creation in one step, using Pants-provided classpaths.
+
+### Classpath Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     JVM Process (started by Pants)                  │
+│  Classpath: tools.build + Clojure + tools.deps + tools.namespace   │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │  build.clj script                                            │   │
+│  │                                                              │   │
+│  │  (b/compile-clj {:basis compile-basis ...})                  │   │
+│  │        │                                                     │   │
+│  │        ▼  forks new JVM                                      │   │
+│  │  ┌──────────────────────────────────────────────────────┐   │   │
+│  │  │  Compilation subprocess                               │   │   │
+│  │  │  Classpath: src/ + compile-libs/*.jar                 │   │   │
+│  │  │  (includes provided deps for type resolution)         │   │   │
+│  │  └──────────────────────────────────────────────────────┘   │   │
+│  │                                                              │   │
+│  │  (b/uber {:basis uber-basis ...})                            │   │
+│  │        │                                                     │   │
+│  │        ▼  reads JARs from uber-basis classpath               │   │
+│  │  ┌──────────────────────────────────────────────────────┐   │   │
+│  │  │  Packages: classes/ + uber-libs/*.jar → app.jar       │   │   │
+│  │  │  (excludes provided deps from final JAR)              │   │   │
+│  │  └──────────────────────────────────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+Key insight: The tools.build execution classpath and the application classpaths are **completely separate**. tools.build forks a new JVM for compilation with only the application's classpath.
 
 ### Tasks
 
@@ -140,6 +378,7 @@ def generate_build_script(
     3. Only compiles the main namespace - Clojure handles transitive compilation
     4. No tools.deps resolution needed - Pants already resolved everything
     """
+    # Note: direct_linking parameter should be added to target field and passed in
     return f'''
 (ns build
   (:require [clojure.tools.build.api :as b]
@@ -149,56 +388,94 @@ def generate_build_script(
 (def uber-file "{uber_file}")
 (def main-ns '{main_ns})
 
-(defn list-jars [dir]
+(defn list-jars
+  "List all JAR files in a directory, returning relative paths."
+  [dir]
   (->> (io/file dir)
        (.listFiles)
-       (filter #(.endsWith (.getName %) ".jar"))
-       (map str)
+       (filter #(and (.isFile %) (.endsWith (.getName %) ".jar")))
+       (map #(str dir "/" (.getName %)))  ; Return relative path: "dir/name.jar"
        vec))
 
+(defn build-classpath-map
+  "Build a classpath map structure for tools.build basis.
+  Each entry maps a path to metadata (we use minimal metadata)."
+  [paths]
+  (into {{}} (map (fn [p] [p {{:path-key (keyword (str "path-" (hash p)))}}]) paths)))
+
 (defn uberjar [_]
-  ;; Classpaths pre-resolved by Pants - no tools.deps needed
-  (let [compile-cp (concat ["src"] (list-jars "compile-libs"))
-        uber-cp (concat ["src"] (list-jars "uber-libs"))
-        compile-basis {{:classpath-roots compile-cp}}
-        uber-basis {{:classpath-roots uber-cp}}]
+  (try
+    ;; Classpaths pre-resolved by Pants - no tools.deps needed
+    (let [compile-cp (vec (concat ["src"] [class-dir] (list-jars "compile-libs")))
+          uber-cp (vec (concat ["src"] [class-dir] (list-jars "uber-libs")))
+          ;; Construct basis maps with required structure
+          compile-basis {{:classpath (build-classpath-map compile-cp)
+                          :classpath-roots compile-cp}}
+          uber-basis {{:classpath (build-classpath-map uber-cp)
+                       :classpath-roots uber-cp}}]
 
-    ;; Clean previous output
-    (b/delete {{:path class-dir}})
+      ;; Clean previous output
+      (b/delete {{:path class-dir}})
+      (.mkdirs (io/file class-dir))
 
-    ;; AOT compile main namespace (Clojure transitively compiles all required namespaces)
-    (println "Compiling" (str main-ns "..."))
-    (b/compile-clj {{:basis compile-basis
-                     :class-dir class-dir
-                     :ns-compile [main-ns]
-                     :compile-opts {{:direct-linking true}}}})
+      ;; AOT compile main namespace (Clojure transitively compiles all required namespaces)
+      (println "Compiling" (str main-ns "..."))
+      (b/compile-clj {{:basis compile-basis
+                       :src-dirs ["src"]
+                       :class-dir class-dir
+                       :ns-compile [main-ns]}})
 
-    ;; Build uberjar with runtime classpath (excludes provided deps)
-    (println "Building uberjar" (str uber-file "..."))
-    (b/uber {{:basis uber-basis
-              :class-dir class-dir
-              :uber-file uber-file
-              :main main-ns
-              ;; Exclude LICENSE to avoid conflicts (some deps have file, others have folder)
-              :exclude ["LICENSE"]}})
+      ;; Build uberjar with runtime classpath (excludes provided deps)
+      (println "Building uberjar" (str uber-file "..."))
+      (b/uber {{:basis uber-basis
+                :class-dir class-dir
+                :uber-file uber-file
+                :main main-ns
+                ;; Exclude LICENSE to avoid conflicts (some deps have file, others have folder)
+                :exclude ["LICENSE"]}})
 
-    ;; Clean up
-    (b/delete {{:path class-dir}})
-    (println "Uberjar built:" uber-file)))
+      ;; Clean up classes directory
+      (b/delete {{:path class-dir}})
+      (println "Uberjar built:" uber-file)
+      (System/exit 0))
+
+    (catch Exception e
+      (println "ERROR:" (.getMessage e))
+      (.printStackTrace e)
+      (System/exit 1))))
 
 ;; Entry point
 (uberjar nil)
-(System/exit 0)
 '''
 ```
 
 **Key points**:
 - `compile-libs/` contains ALL JARs (including provided) - for AOT compilation
 - `uber-libs/` contains runtime JARs only (excluding provided) - for packaging
-- No tools.deps, no deps.edn, no Maven coordinate parsing
+- No tools.deps resolution, no deps.edn, no Maven coordinate parsing
 - Pants lays out the directories, tools.build just uses them
 - `:ns-compile [main-ns]` - only compiles main; Clojure handles transitive compilation
 - `:exclude ["LICENSE"]` - avoids conflicts when some deps have LICENSE as file vs folder
+
+**Important: Basis Map Structure**
+
+The basis map passed to `compile-clj` and `uber` needs more than just `:classpath-roots`. Looking at tools.build source:
+- `compile-clj` uses `basis-paths` which reads both `:classpath` and `:classpath-roots`
+- `uber` uses the basis to pull dependency JARs
+
+**Alternative approach using `:cp` and `:src-dirs`**:
+
+Instead of constructing a full basis, we can pass classpath explicitly via `:cp`:
+```clojure
+(b/compile-clj {:cp (vec compile-cp)  ; explicit classpath, no basis needed
+                :src-dirs ["src"]      ; source directories explicitly
+                :class-dir class-dir
+                :ns-compile [main-ns]})
+```
+
+This bypasses basis entirely for compilation. For `uber`, we may need a different approach (see Phase 2 Validation).
+
+**Classpath isolation**: When `b/compile-clj` runs, it forks a NEW JVM process with the classpath specified via `:basis` or `:cp`. The tools.build execution classpath (which includes Clojure, tools.deps, etc.) is completely separate from the application classpath.
 
 #### 2.2 Create the uberjar rule
 
@@ -211,6 +488,25 @@ class ToolsBuildUberjarRequest:
     runtime_classpath: Classpath  # Deps excluding provided (for JAR)
     source_digest: Digest  # Source files with stripped roots
     jdk: JvmJdkField | None = None
+
+# How the two classpaths are computed (shown in Phase 3):
+#
+# 1. Get all target addresses (first-party deps):
+#    transitive_targets = await Get(TransitiveTargets, TransitiveTargetsRequest(...))
+#    all_source_addresses = Addresses(t.address for t in transitive_targets.closure)
+#
+# 2. Get provided deps (to exclude from runtime):
+#    provided_deps = await Get(ProvidedDependencies, ProvidedDependenciesRequest(...))
+#
+# 3. Compute runtime addresses (excluding provided):
+#    runtime_source_addresses = Addresses(
+#        addr for addr in all_source_addresses
+#        if addr not in provided_deps.addresses
+#    )
+#
+# 4. Get classpaths:
+#    compile_classpath = await Get(Classpath, Addresses, all_source_addresses)
+#    runtime_classpath = await Get(Classpath, Addresses, runtime_source_addresses)
 
 @dataclass(frozen=True)
 class ToolsBuildUberjarResult:
@@ -272,11 +568,18 @@ async def build_uberjar_with_tools_build(
     ]))
 
     # 5. Run tools.build
+    # NOTE: tools_classpath contains tools.build + ALL its transitive deps:
+    #   - org.clojure:clojure (provides clojure.main entry point)
+    #   - org.clojure:tools.deps
+    #   - org.clojure:tools.namespace
+    #   - org.slf4j:slf4j-nop
+    # These are resolved automatically by Coursier.
+    # This is SEPARATE from the application classpath (compile-libs/uber-libs).
     process = JvmProcess(
         jdk=jdk,
-        classpath_entries=tools_classpath.classpath_entries(),
-        argv=["clojure.main", "build.clj"],
-        input_digest=input_digest,
+        classpath_entries=tools_classpath.classpath_entries(),  # tools.build classpath
+        argv=["clojure.main", "build.clj"],  # clojure.main is in the Clojure JAR
+        input_digest=input_digest,  # Contains: build.clj, src/, compile-libs/, uber-libs/
         output_files=("app.jar",),
         description=f"Build uberjar for {request.main_namespace}",
         timeout_seconds=600,
@@ -300,9 +603,70 @@ async def build_uberjar_with_tools_build(
 - Rule to build uberjar using tools.build with Pants-provided classpaths
 
 ### Validation
+
+**Pre-implementation validation (CRITICAL - do before writing production code):**
+- Manually test the minimal basis map approach in a standalone Clojure project
+- Verify that `compile-clj` with `:basis {:classpath ... :classpath-roots ...}` works correctly
+- Verify that `uber` correctly uses the basis to pull JARs
+- Document any additional basis fields required
+
+**Integration tests (after implementation):**
 - Integration test: build uberjar for simple app
 - Integration test: build uberjar with dependencies
 - Integration test: verify provided deps excluded from JAR but available during compile
+- Integration test: verify classpath isolation (app compiled with its own Clojure version, not tools.build's)
+- Unit test: verify tools.build classpath includes Clojure and transitive deps (already exists in test_tools_build.py)
+
+### Implementation Notes (Deviations from Plan)
+
+During implementation, the following deviations from the original plan were necessary:
+
+#### 1. Added `:java-cmd` parameter for `compile-clj`
+
+**Problem**: tools.build's `compile-clj` forks a new JVM subprocess and looks for the Java executable via `$JAVA_CMD`, `$PATH`, or `$JAVA_HOME`. In the Pants sandbox, these environment variables aren't configured.
+
+**Solution**: Added a `java_cmd` parameter to `generate_build_script()` and pass `__java_home/bin/java` (Pants' JDK symlink location) to `:java-cmd` in the build script:
+
+```clojure
+(b/compile-clj {:basis compile-basis
+                :src-dirs ["src"]
+                :class-dir class-dir
+                :ns-compile [main-ns]
+                :java-cmd java-cmd})  ;; Added this
+```
+
+#### 2. Different basis structure for `uber` vs `compile-clj`
+
+**Problem**: The plan suggested using `:classpath` and `:classpath-roots` for both functions, but `uber` actually expects a `:libs` map where each library has `:paths`.
+
+**Solution**: Use different basis structures:
+
+```clojure
+;; For compile-clj (simpler than plan suggested):
+{:classpath-roots compile-cp}
+
+;; For uber (requires :libs map):
+{:libs {dep0 {:paths ["uber-libs/clojure.jar"]}
+        dep1 {:paths ["uber-libs/spec.jar"]}
+        ...}}
+```
+
+The `build-libs-map` helper function constructs this structure from the JAR paths.
+
+#### 3. Simplified `compile-clj` basis
+
+**Problem**: The plan suggested a full basis map with both `:classpath` and `:classpath-roots`.
+
+**Solution**: Testing revealed that `compile-clj` only needs `:classpath-roots`, so the simpler structure was used.
+
+#### 4. Added debug output to build script
+
+Added `println` statements to show JAR counts during build, helpful for debugging:
+
+```clojure
+(println "compile-libs:" (count compile-jars) "JARs")
+(println "uber-libs:" (count uber-jars) "JARs")
+```
 
 ---
 
@@ -411,7 +775,7 @@ Since tools.build handles AOT compilation, `aot_compile.py` can be:
 
 ---
 
-## Phase 4: Keep Provided Dependencies Logic (Don't Oversimplify)
+## Phase 4: Keep Provided Dependencies Logic (Don't Oversimplify) [COMPLETED]
 
 ### Goal
 Maintain the transitive expansion logic for provided dependencies, since this is critical for correctness.
@@ -448,7 +812,7 @@ The provided dependencies rule may need minor updates to work with the new flow,
 
 ---
 
-## Phase 5: Testing and Documentation
+## Phase 5: Testing and Documentation [COMPLETED]
 
 ### Goal
 Comprehensive testing and updated documentation.
@@ -537,28 +901,52 @@ None expected. The change is purely internal implementation.
 ### Risk 4: Error messages may be less clear
 **Mitigation**: Wrap tools.build errors with helpful context about what step failed.
 
+### Risk 5: Classpath version conflicts between tools.build and application
+**Situation**: tools.build brings in Clojure 1.12.0 (and its other deps) on its execution classpath. If the application uses a different Clojure version, could there be conflicts?
+
+**Mitigation**: This is NOT a concern because:
+1. tools.build runs in its own JVM process with its own classpath
+2. When `b/compile-clj` runs, it forks a NEW JVM with only the application's classpath (from `:classpath-roots`)
+3. The application's Clojure version (in `compile-libs/`) is used for AOT compilation
+4. tools.build's Clojure is never on the same classpath as the application's Clojure
+
+**Validation**: Add a test that compiles an app using Clojure 1.10.x to verify classpath isolation works correctly.
+
 ---
 
 ## Success Metrics
 
-1. **Code reduction**: From ~1,170 lines to ~400 lines (~65% reduction)
-2. **Dependency reduction**: No tools.deps needed, only tools.build
+1. **Code simplification**: Significant reduction in complex filtering logic in package.py
+   - Remove `is_first_party_class()`, `is_provided_class()`, `get_namespace_path_from_class()`
+   - Remove two-phase JAR scanning logic
+   - Remove source-only library detection
+   - **Realistic target**: ~40-50% reduction in package.py complexity
+2. **Dependency reduction**: No tools.deps resolution needed (though it's included transitively)
 3. **Bug fixes**: Specter and similar source-only library issues resolved
 4. **Maintainability**: Single source of truth (tools.build) for AOT/uberjar logic
-5. **Test coverage**: All existing tests pass, plus new edge case tests
+5. **Test coverage**: All behavior tests pass, plus new edge case tests
+6. **Classpath isolation**: Verified that tools.build's Clojure version doesn't conflict with app's Clojure version
 
 ---
 
 ## Phase Dependencies
 
 ```
-Phase 1 (Infrastructure)
+Phase 1 (Infrastructure) [COMPLETED]
     ↓
-Phase 2 (tools.build Invocation)
+Phase 1.5 (Test Cleanup) [COMPLETED]
     ↓
-Phase 3 (Simplify Package Rule)
+Phase 2 (tools.build Invocation) [COMPLETED]
     ↓
-Phase 4 (Provided Deps - parallel with Phase 3)
+Phase 3 (Simplify Package Rule) [COMPLETED]
     ↓
-Phase 5 (Testing & Docs)
+Phase 4 (Provided Deps - parallel with Phase 3) [COMPLETED]
+    ↓
+Phase 5 (Testing & Docs) [COMPLETED]
 ```
+
+**Why Test Cleanup before Phase 2?**
+During the initial Phase 2 implementation attempt, the complex test cases for filtering logic caused confusion and led to implementation deviations from the plan. By cleaning up these tests first, we ensure that:
+1. The new implementation is guided by behavior tests, not implementation tests
+2. There's no confusion about what the final JAR should contain
+3. Tests that will inevitably fail (because they test removed code) are already gone

@@ -6,7 +6,9 @@
       "WebFetch(domain:clojure.org)",
       "Bash(pants list:*)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:leiningen.org)"
+      "WebFetch(domain:leiningen.org)",
+      "WebSearch",
+      "Bash(pants check:*)"
     ],
     "deny": [],
     "ask": [],

@@ -1,16 +1,18 @@
 # Uberjar Creation: Comparison with Leiningen and tools.build
 
-This document explains how the pants-clojure plugin creates uberjars and how our approach compares to Leiningen and tools.build.
+This document explains how the pants-clojure plugin creates uberjars and how our approach compares to Leiningen and standalone tools.build usage.
 
 ## Overview
 
-All three tools follow a similar high-level process:
+The pants-clojure plugin **delegates to tools.build** for AOT compilation and uberjar creation. This means we benefit from the same battle-tested code that the Clojure community uses.
+
+All tools follow a similar high-level process:
 
 1. AOT compile Clojure namespaces to `.class` files
 2. Combine compiled classes with dependency JARs
 3. Package everything into a single executable JAR
 
-The key differences are in how each tool handles **third-party classes** generated during AOT compilation.
+The key differences are in how each tool resolves dependencies and sets up the build environment.
 
 ## The AOT Compilation Challenge
 
@@ -89,55 +91,49 @@ tools.build provides conflict handlers (`:ignore`, `:overwrite`, `:warn`, `:erro
 
 ### pants-clojure
 
-Our plugin takes a more conservative approach:
+Our plugin **delegates to tools.build** for AOT compilation and uberjar creation, with Pants handling dependency resolution:
 
-1. **AOT compile** the main namespace (transitively compiles everything)
-2. **Filter AOT output** to keep only first-party classes
-3. **Extract dependency JARs** for all third-party content
+1. **Pants resolves dependencies** using Coursier (no tools.deps resolution needed)
+2. **tools.build compiles** the main namespace via `b/compile-clj`
+3. **tools.build packages** the uberjar via `b/uber`
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                     Uberjar                         │
 ├─────────────────────────────────────────────────────┤
-│  Your AOT classes     │  From AOT output            │
-│  (my/app/core.class)  │  (filtered to first-party)  │
+│  Your AOT classes     │  From tools.build compile   │
+│  (my/app/core.class)  │  (transitively compiled)    │
 ├───────────────────────┼─────────────────────────────┤
-│  Third-party classes  │  From dependency JARs       │
-│  (clojure/core.class) │  (AOT copies discarded)     │
+│  Third-party classes  │  From tools.build uber      │
+│  (clojure/core.class) │  (from dependency JARs)     │
 └─────────────────────────────────────────────────────┘
 ```
 
-**Key behavior**: We explicitly discard third-party AOT classes and always use JAR contents. This guarantees protocol identity consistency.
+**Key behavior**: By using tools.build, we get the same AOT and uberjar behavior that the Clojure community relies on. Pants provides the classpaths; tools.build does the compilation and packaging.
 
-**First-party detection**: Unlike Leiningen's directory-based approach, we use **source analysis** to determine first-party classes:
+**Two-classpath approach**: We maintain separate classpaths for compilation vs packaging:
+- **Compile classpath**: All dependencies including `provided` (needed for type resolution)
+- **Uber classpath**: Runtime dependencies excluding `provided` (what goes in the JAR)
 
-1. **Namespace paths**: Classes matching namespaces from `clojure_source` targets (e.g., `my/app/core__init.class`)
-2. **gen-class :name detection**: We parse source files for `(:gen-class :name X)` patterns and include those custom-named classes
-
-This means custom gen-class names work correctly:
+Custom gen-class names work correctly because tools.build handles them natively:
 
 ```clojure
 (ns my.app
   (:gen-class :name com.example.CustomMain))  ; Correctly included!
 ```
 
-The class `com/example/CustomMain.class` is included even though `com.example` doesn't exist as a source directory.
-
 ## Comparison Table
 
-| Aspect | Leiningen | tools.build | pants-clojure |
-|--------|-----------|-------------|---------------|
-| AOT compiles transitively | Yes | Yes | Yes |
+| Aspect | Leiningen | tools.build (standalone) | pants-clojure |
+|--------|-----------|--------------------------|---------------|
+| AOT compiles transitively | Yes | Yes | Yes (via tools.build) |
 | Third-party in final JAR | Yes | Yes | Yes |
-| Source of third-party classes | Dependency JARs | Class-dir or JARs (configurable) | Dependency JARs only |
-| Third-party AOT classes | Implicitly discarded | Kept (may override JARs) | Explicitly discarded (if in JAR) |
-| Protocol safety | Safe | Depends on config | Safe by default |
-| Conflict resolution | Last wins (JAR merge order) | Configurable strategies | First-party AOT, then JARs |
-| First-party detection | Directory structure | N/A (includes all) | Source analysis |
-| Custom gen-class :name | Broken if filtering enabled | Works (no filtering) | Works (source analysis) |
-| Macro-generated classes | Works (merge order side-effect) | Works if class-dir first | Works (JAR contents check) |
-| Source files included | Yes (`:omit-source` to exclude) | Yes (user decides) | Conditional (excluded for AOT'd source-only libs) |
-| Source-only lib handling | No special handling | No special handling | Auto-detects, excludes source to prevent class identity issues |
+| Dependency resolution | Leiningen/Maven | tools.deps | Pants/Coursier |
+| AOT/uberjar creation | Leiningen internals | tools.build | tools.build |
+| Conflict resolution | Last wins (JAR merge order) | Configurable strategies | tools.build default |
+| Custom gen-class :name | Broken if filtering enabled | Works | Works |
+| Provided dependencies | Profile-based | Manual alias | Native `provided` field |
+| Macro-generated classes | Works | Works | Works |
 
 ## Source File Handling
 
@@ -188,35 +184,9 @@ Tests explicitly show both sources and classes in the final JAR:
 
 ### pants-clojure
 
-**Default: Conditional based on library type**
+Since we delegate to tools.build, source file handling follows tools.build's behavior. For AOT-compiled JARs, source files are typically not included since the compiled classes are used instead.
 
-We take a more nuanced approach:
-
-| Library Type | Classes | Source Files |
-|--------------|---------|--------------|
-| Pre-compiled (has .class in JAR) | From JAR | From JAR |
-| Source-only (no .class in JAR) | From AOT | **Excluded** |
-| First-party | From AOT | Excluded (compiled) |
-
-**Why exclude source for source-only libraries?**
-
-When both AOT-compiled classes AND source files are present, Clojure might reload source at runtime (e.g., via `require :reload` or certain macro patterns). This creates fresh class instances that don't match the class identities baked into first-party AOT code, causing errors like:
-
-```
-No implementation of method: :implicit-nav of protocol:
-#'com.rpl.specter.protocols/ImplicitNav found for class: com.rpl.specter.impl.DynamicPath
-```
-
-By excluding source files for source-only libraries when we have AOT classes, we ensure consistent class identities throughout the application.
-
-### Comparison Table: Source File Handling
-
-| Aspect | Leiningen | tools.build | pants-clojure |
-|--------|-----------|-------------|---------------|
-| Include source by default | Yes | Yes | Conditional |
-| `:omit-source` option | Yes | Manual (don't copy) | Automatic for source-only libs |
-| Protocol issue handling | Documentation warning | User responsibility | Automatic exclusion |
-| Source-only lib detection | No | No | Yes |
+For source-only JARs (`main="clojure.main"`), source files ARE included since there's no AOT compilation.
 
 ## Macro-Generated Classes
 
@@ -226,32 +196,9 @@ Some Clojure macros generate classes in the **macro's namespace** rather than th
 - **core.async's `go`** generates state machine classes in `clojure.core.async.impl`
 - **core.match** generates pattern matching classes in its impl namespace
 
-These classes don't exist in the original library JAR - they're only created during AOT compilation of YOUR code that uses the macro.
+tools.build handles these correctly - the generated classes are included in the uberjar.
 
-### How Each Tool Handles This
-
-| Tool | Behavior | Why It Works (or Doesn't) |
-|------|----------|---------------------------|
-| **Leiningen** | Works | AOT classes are added first, JARs merged after. Since no JAR contains the macro-generated class, nothing overwrites it. Works by accident of merge order. |
-| **tools.build** | Usually works | With default `:ignore` conflict strategy and class-dir processed first, AOT classes survive. But behavior depends on configuration. |
-| **pants-clojure** | Works | We explicitly check if each AOT class exists in any dependency JAR. If not found in any JAR, we keep it from AOT output. Intentional, not accidental. |
-
-### Our Approach
-
-```
-For each AOT-generated class:
-  1. Is it first-party (matches our source namespaces)? → Keep from AOT
-  2. Does it exist in any dependency JAR? → Discard, use JAR version
-  3. Not in any JAR? → Keep from AOT (it's macro-generated)
-```
-
-This gives us the best of both worlds:
-- **Protocol safety**: Third-party classes that exist in JARs come from JARs
-- **Macro support**: Classes that don't exist anywhere except AOT output are kept
-
-## Why Our Approach is Safer
-
-### Protocol Identity Issues
+## Protocol Identity
 
 Clojure protocols rely on JVM class identity. When you extend a protocol:
 
@@ -269,13 +216,9 @@ java.lang.IllegalArgumentException: No implementation of method: :my-method
 of protocol: #'some.lib/MyProtocol found for class: some.lib.SomeRecord
 ```
 
-### Our Solution
+### How tools.build Handles This
 
-By always using JAR classes for third-party code, we ensure:
-
-1. **Single source of truth**: Each third-party class comes from exactly one place (its JAR)
-2. **Consistent identity**: Protocol classes match between definition and extension
-3. **No ordering issues**: Unlike tools.build's conflict resolution, we don't depend on processing order
+tools.build handles protocol identity correctly by extracting dependency JARs into the uberjar. By delegating to tools.build, we get this behavior automatically.
 
 ## AOT Modes
 
@@ -284,15 +227,13 @@ By always using JAR classes for third-party code, we ensure:
 ```python
 clojure_deploy_jar(
     name="my-app",
-    main="my.app.core",  # AOT compiled transitively
+    main="my.app.core",  # AOT compiled via tools.build
     dependencies=[...],
 )
 ```
 
 - Main namespace must have `(:gen-class)`
-- All required namespaces are compiled transitively
-- First-party classes included from AOT
-- Third-party classes included from JARs
+- tools.build compiles main namespace (Clojure transitively compiles required namespaces)
 - JAR is directly executable: `java -jar app.jar`
 
 ### Source-Only Mode (no AOT)
@@ -354,11 +295,11 @@ This matches tools.build best practices and provides:
 
 ## Summary
 
-Our uberjar approach prioritizes **correctness and safety** over flexibility:
+Our uberjar approach delegates to **tools.build** for reliability:
 
-1. **Protocol-safe by default**: Third-party classes always come from JARs
-2. **Simple mental model**: First-party = AOT, third-party = JARs
-3. **No configuration needed**: Safe behavior without conflict resolution tuning
-4. **Compatible with ecosystem**: Works with all Clojure libraries, including those with protocol extensions
+1. **Battle-tested**: Uses the same tools.build code that the Clojure community relies on
+2. **Simple mental model**: Pants resolves dependencies, tools.build handles AOT and packaging
+3. **Native provided support**: First-class `provided` field for compile-only dependencies
+4. **Compatible with ecosystem**: Works with all Clojure libraries
 
-This makes pants-clojure uberjars reliable for production use without needing to understand the nuances of AOT compilation and class identity.
+This makes pants-clojure uberjars reliable for production use, leveraging the official Clojure tooling.
