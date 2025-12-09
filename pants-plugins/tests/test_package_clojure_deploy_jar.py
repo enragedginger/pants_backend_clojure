@@ -132,6 +132,74 @@ def test_package_simple_deploy_jar(rule_runner: RuleRunner) -> None:
     assert result.artifacts[0].relpath.endswith(".jar")
 
 
+def test_package_deploy_jar_includes_source_files(rule_runner: RuleRunner) -> None:
+    """Test that AOT-compiled JAR includes source files alongside classes.
+
+    Source files should be included in the uberjar so they're available at runtime
+    for debugging, stack traces with source info, and dynamic code loading.
+    """
+    import zipfile
+    import io
+
+    setup_rule_runner(rule_runner)
+    rule_runner.write_files(
+        {
+            "locks/jvm/java17.lock.jsonc": CLOJURE_LOCKFILE,
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "src/myapp/BUILD": dedent(
+                """\
+                clojure_source(
+                    name="core",
+                    source="core.clj",
+                    dependencies=["3rdparty/jvm:org.clojure_clojure"],
+                )
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="myapp.core",
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/myapp/core.clj": dedent(
+                """\
+                (ns myapp.core
+                  (:gen-class))
+
+                (defn -main
+                  [& args]
+                  (println "Hello from myapp!"))
+                """
+            ),
+        }
+    )
+
+    target = rule_runner.get_target(Address("src/myapp", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+
+    result = rule_runner.request(BuiltPackage, [field_set])
+    assert len(result.artifacts) == 1
+
+    # Read the JAR contents
+    jar_digest = result.digest
+    digest_contents = rule_runner.request(DigestContents, [jar_digest])
+    jar_content = next(fc for fc in digest_contents if fc.path.endswith(".jar"))
+
+    with zipfile.ZipFile(io.BytesIO(jar_content.content), 'r') as jar:
+        entries = jar.namelist()
+
+        # Should have BOTH compiled classes AND source files
+        myapp_classes = [e for e in entries if e.startswith('myapp/') and e.endswith('.class')]
+        myapp_sources = [e for e in entries if e.startswith('myapp/') and e.endswith('.clj')]
+
+        assert len(myapp_classes) > 0, \
+            f"Expected compiled classes for myapp namespace, found: {entries}"
+        assert 'myapp/core.clj' in entries, \
+            f"Expected myapp/core.clj source file in JAR, found: {entries}"
+        assert len(myapp_sources) > 0, \
+            f"Expected source files for myapp namespace, found: {entries}"
+
+
 def test_package_deploy_jar_validates_gen_class(rule_runner: RuleRunner) -> None:
     """Test that packaging fails if main namespace doesn't have gen-class."""
     setup_rule_runner(rule_runner)

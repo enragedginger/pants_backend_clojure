@@ -138,7 +138,6 @@ def generate_build_script(
           ;; Include provided-src in compile classpath so transitive deps resolve,
           ;; but only compile src-dirs (not provided-src)
           compile-cp (vec (concat ["src" "provided-src"] [class-dir] compile-jars))
-          uber-cp (vec (concat ["src"] [class-dir] uber-jars))
           ;; Construct basis maps with required structure
           ;; compile-clj uses :classpath-roots
           compile-basis {{:classpath-roots compile-cp}}
@@ -151,6 +150,12 @@ def generate_build_script(
       ;; Clean previous output
       (b/delete {{:path class-dir}})
       (.mkdirs (io/file class-dir))
+
+      ;; Copy source files to class-dir so they're included in the uberjar
+      ;; This ensures .clj/.cljc files are available at runtime
+      (println "Copying source files to" class-dir)
+      (b/copy-dir {{:src-dirs ["src"]
+                    :target-dir class-dir}})
 
       ;; AOT compile main namespace (Clojure transitively compiles all required namespaces)
       ;; Note: compile-clj forks a subprocess, so we must provide :java-cmd
