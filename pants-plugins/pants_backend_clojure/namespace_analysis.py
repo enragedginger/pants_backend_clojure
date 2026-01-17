@@ -22,7 +22,7 @@ from pants.util.frozendict import FrozenDict
 from pants.util.logging import LogLevel
 from pants.util.strutil import pluralize
 
-from clojure_backend.subsystems.clj_kondo import CljKondo
+from pants_backend_clojure.subsystems.clj_kondo import CljKondo
 
 
 logger = logging.getLogger(__name__)

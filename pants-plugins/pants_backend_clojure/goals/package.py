@@ -35,21 +35,21 @@ from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmJdkField, JvmResolveField
 from pants.util.logging import LogLevel
 
-from clojure_backend.namespace_analysis import (
+from pants_backend_clojure.namespace_analysis import (
     ClojureNamespaceAnalysis,
     ClojureNamespaceAnalysisRequest,
 )
-from clojure_backend.provided_dependencies import (
+from pants_backend_clojure.provided_dependencies import (
     ProvidedDependencies,
     ResolveProvidedDependenciesRequest,
 )
-from clojure_backend.target_types import (
+from pants_backend_clojure.target_types import (
     ClojureMainNamespaceField,
     ClojureProvidedDependenciesField,
     ClojureSourceField,
     ClojureTestSourceField,
 )
-from clojure_backend.tools_build_uberjar import (
+from pants_backend_clojure.tools_build_uberjar import (
     ToolsBuildUberjarRequest,
     ToolsBuildUberjarResult,
 )

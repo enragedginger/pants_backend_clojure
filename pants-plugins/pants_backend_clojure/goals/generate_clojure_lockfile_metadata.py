@@ -26,7 +26,7 @@ from pants.jvm.resolve.coursier_fetch import (
 from pants.jvm.subsystems import JvmSubsystem
 from pants.util.logging import LogLevel
 
-from clojure_backend.utils.jar_analyzer import analyze_jar_for_namespaces
+from pants_backend_clojure.utils.jar_analyzer import analyze_jar_for_namespaces
 
 
 class GenerateClojureLockfileMetadataSubsystem(GoalSubsystem):

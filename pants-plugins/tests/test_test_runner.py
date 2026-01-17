@@ -4,16 +4,16 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.target_types import (
+from pants_backend_clojure.target_types import (
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,
     ClojureTestsGeneratorTarget,
     ClojureTestTarget,
 )
-from clojure_backend.target_types import rules as target_types_rules
-from clojure_backend.goals.test import ClojureTestFieldSet, ClojureTestRequest
-from clojure_backend.goals.test import rules as test_runner_rules
-from clojure_backend import compile_clj
+from pants_backend_clojure.target_types import rules as target_types_rules
+from pants_backend_clojure.goals.test import ClojureTestFieldSet, ClojureTestRequest
+from pants_backend_clojure.goals.test import rules as test_runner_rules
+from pants_backend_clojure import compile_clj
 from pants.backend.java.target_types import JavaSourcesGeneratorTarget
 from pants.core.goals.test import TestResult
 from pants.core.util_rules import config_files, source_files, stripped_source_files, system_binaries

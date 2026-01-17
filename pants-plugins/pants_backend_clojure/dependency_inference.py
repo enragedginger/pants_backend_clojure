@@ -25,18 +25,18 @@ from pants.util.frozendict import FrozenDict
 from pants.util.logging import LogLevel
 from pants.util.ordered_set import OrderedSet
 
-from clojure_backend.clojure_symbol_mapping import ClojureNamespaceMapping
-from clojure_backend.namespace_analysis import (
+from pants_backend_clojure.clojure_symbol_mapping import ClojureNamespaceMapping
+from pants_backend_clojure.namespace_analysis import (
     ClojureNamespaceAnalysis,
     ClojureNamespaceAnalysisRequest,
 )
-from clojure_backend.target_types import (
+from pants_backend_clojure.target_types import (
     ClojureSourceField,
     ClojureSourceTarget,
     ClojureTestSourceField,
     ClojureTestTarget,
 )
-from clojure_backend.utils.namespace_parser import (
+from pants_backend_clojure.utils.namespace_parser import (
     is_jdk_class,
     namespace_to_path,
 )

@@ -4,14 +4,14 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.goals.lint import CljKondoRequest
-from clojure_backend.goals.lint import rules as lint_rules
-from clojure_backend.target_types import (
+from pants_backend_clojure.goals.lint import CljKondoRequest
+from pants_backend_clojure.goals.lint import rules as lint_rules
+from pants_backend_clojure.target_types import (
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,
     ClojureTestTarget,
 )
-from clojure_backend.target_types import rules as target_types_rules
+from pants_backend_clojure.target_types import rules as target_types_rules
 from pants.core.goals.lint import LintResult
 from pants.core.util_rules import config_files, external_tool, source_files
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
@@ -61,7 +61,7 @@ def run_clj_kondo(
 ) -> LintResult:
     rule_runner.set_options(
         [
-            "--backend-packages=clojure_backend",
+            "--backend-packages=pants_backend_clojure",
             "--no-clj-kondo-use-classpath",  # Disable classpath support in tests for now
             "--no-clj-kondo-use-cache",  # Disable cache support in tests for now
             *(extra_args or []),
@@ -317,7 +317,7 @@ def test_clj_kondo_respects_skip_option(rule_runner: RuleRunner) -> None:
     """Test that --clj-kondo-skip option is available."""
     # This test just verifies the subsystem option exists
     rule_runner.set_options(
-        ["--backend-packages=clojure_backend", "--clj-kondo-skip"],
+        ["--backend-packages=pants_backend_clojure", "--clj-kondo-skip"],
         env_inherit={"PATH", "PYENV_ROOT", "HOME"},
     )
     # If we get here without error, the option exists

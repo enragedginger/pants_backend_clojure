@@ -20,13 +20,13 @@ from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmJdkField, JvmResolveField
 from pants.util.logging import LogLevel
 
-from clojure_backend.namespace_analysis import (
+from pants_backend_clojure.namespace_analysis import (
     ClojureNamespaceAnalysis,
     ClojureNamespaceAnalysisRequest,
 )
-from clojure_backend.subsystems.clojure_check import ClojureCheckSubsystem
-from clojure_backend.target_types import ClojureSourceField
-from clojure_backend.utils.namespace_parser import path_to_namespace
+from pants_backend_clojure.subsystems.clojure_check import ClojureCheckSubsystem
+from pants_backend_clojure.target_types import ClojureSourceField
+from pants_backend_clojure.utils.namespace_parser import path_to_namespace
 
 
 @dataclass(frozen=True)

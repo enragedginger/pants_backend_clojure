@@ -6,18 +6,18 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.goals.check import ClojureCheckFieldSet, ClojureCheckRequest
-from clojure_backend.goals import check as check_goal
-from clojure_backend.goals.test import ClojureTestFieldSet, ClojureTestRequest
-from clojure_backend.goals.test import rules as test_runner_rules
-from clojure_backend.namespace_analysis import rules as namespace_analysis_rules
-from clojure_backend.target_types import (
+from pants_backend_clojure.goals.check import ClojureCheckFieldSet, ClojureCheckRequest
+from pants_backend_clojure.goals import check as check_goal
+from pants_backend_clojure.goals.test import ClojureTestFieldSet, ClojureTestRequest
+from pants_backend_clojure.goals.test import rules as test_runner_rules
+from pants_backend_clojure.namespace_analysis import rules as namespace_analysis_rules
+from pants_backend_clojure.target_types import (
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,
     ClojureTestTarget,
 )
-from clojure_backend.target_types import rules as target_types_rules
-from clojure_backend import compile_clj
+from pants_backend_clojure.target_types import rules as target_types_rules
+from pants_backend_clojure import compile_clj
 from pants.core.goals.check import CheckResults
 from pants.core.goals.test import TestResult
 from pants.core.util_rules import config_files, external_tool, source_files, stripped_source_files, system_binaries

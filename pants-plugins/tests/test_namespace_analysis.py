@@ -6,12 +6,12 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.namespace_analysis import (
+from pants_backend_clojure.namespace_analysis import (
     ClojureNamespaceAnalysis,
     ClojureNamespaceAnalysisRequest,
 )
-from clojure_backend.namespace_analysis import rules as namespace_analysis_rules
-from clojure_backend.target_types import ClojureSourceTarget
+from pants_backend_clojure.namespace_analysis import rules as namespace_analysis_rules
+from pants_backend_clojure.target_types import ClojureSourceTarget
 from pants.core.util_rules import config_files, external_tool, source_files
 from pants.engine.rules import QueryRule
 from pants.testutil.rule_runner import RuleRunner
@@ -38,7 +38,7 @@ def analyze_files(
 ) -> ClojureNamespaceAnalysis:
     """Helper to analyze Clojure files and return the analysis result."""
     rule_runner.set_options(
-        ["--backend-packages=clojure_backend"],
+        ["--backend-packages=pants_backend_clojure"],
         env_inherit={"PATH", "PYENV_ROOT", "HOME"},
     )
     rule_runner.write_files(files)
@@ -216,7 +216,7 @@ def test_malformed_clojure_syntax(rule_runner: RuleRunner) -> None:
 def test_empty_snapshot(rule_runner: RuleRunner) -> None:
     """Test handling of empty snapshot (no files)."""
     rule_runner.set_options(
-        ["--backend-packages=clojure_backend"],
+        ["--backend-packages=pants_backend_clojure"],
         env_inherit={"PATH", "PYENV_ROOT", "HOME"},
     )
 
@@ -369,7 +369,7 @@ def test_comment_form_requires_included_without_config(rule_runner: RuleRunner) 
     )
 
     rule_runner.set_options(
-        ["--backend-packages=clojure_backend"],
+        ["--backend-packages=pants_backend_clojure"],
         env_inherit={"PATH", "PYENV_ROOT", "HOME"},
     )
     rule_runner.write_files(
@@ -420,7 +420,7 @@ def test_config_file_skip_comments_is_respected(rule_runner: RuleRunner) -> None
     )
 
     rule_runner.set_options(
-        ["--backend-packages=clojure_backend"],
+        ["--backend-packages=pants_backend_clojure"],
         env_inherit={"PATH", "PYENV_ROOT", "HOME"},
     )
 

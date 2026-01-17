@@ -6,19 +6,19 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.provided_dependencies import (
+from pants_backend_clojure.provided_dependencies import (
     ProvidedDependencies,
     ResolveProvidedDependenciesRequest,
     get_maven_transitive_coordinates,
     resolve_provided_dependencies,
 )
-from clojure_backend.provided_dependencies import rules as provided_dependencies_rules
-from clojure_backend.target_types import (
+from pants_backend_clojure.provided_dependencies import rules as provided_dependencies_rules
+from pants_backend_clojure.target_types import (
     ClojureProvidedDependenciesField,
     ClojureDeployJarTarget,
     ClojureSourceTarget,
 )
-from clojure_backend.target_types import rules as target_types_rules
+from pants_backend_clojure.target_types import rules as target_types_rules
 from pants.build_graph.address import Address
 from pants.engine.rules import QueryRule
 from pants.jvm import classpath, jvm_common

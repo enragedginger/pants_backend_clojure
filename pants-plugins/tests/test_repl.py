@@ -4,17 +4,17 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.goals.repl import ClojureNRepl, ClojureRebelRepl, ClojureRepl
-from clojure_backend.goals.repl import rules as repl_rules
-from clojure_backend.namespace_analysis import rules as namespace_analysis_rules
-from clojure_backend.target_types import (
+from pants_backend_clojure.goals.repl import ClojureNRepl, ClojureRebelRepl, ClojureRepl
+from pants_backend_clojure.goals.repl import rules as repl_rules
+from pants_backend_clojure.namespace_analysis import rules as namespace_analysis_rules
+from pants_backend_clojure.target_types import (
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,
     ClojureTestsGeneratorTarget,
     ClojureTestTarget,
 )
-from clojure_backend.target_types import rules as target_types_rules
-from clojure_backend import compile_clj
+from pants_backend_clojure.target_types import rules as target_types_rules
+from pants_backend_clojure import compile_clj
 from pants.backend.java.target_types import JavaSourcesGeneratorTarget
 from pants.core.goals.repl import ReplRequest
 from pants.core.util_rules import config_files, external_tool, source_files, stripped_source_files, system_binaries

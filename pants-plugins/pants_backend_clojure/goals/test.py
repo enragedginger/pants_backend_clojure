@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from clojure_backend.target_types import (
+from pants_backend_clojure.target_types import (
     ClojureSourceField,
     ClojureTestExtraEnvVarsField,
     ClojureTestFieldSet,

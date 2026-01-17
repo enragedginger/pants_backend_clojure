@@ -5,7 +5,7 @@ pythonpath = ["%(buildroot)s/pants-plugins"]
 backend_packages = [
   "pants.backend.experimental.java",
   "pants.backend.python",
-  "clojure_backend",
+  "pants_backend_clojure",
   "pants.backend.plugin_development",
 ]
 

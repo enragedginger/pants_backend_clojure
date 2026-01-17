@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from clojure_backend.utils.source_roots import determine_source_root
+from pants_backend_clojure.utils.source_roots import determine_source_root
 
 
 def test_determine_source_root_basic_case() -> None:

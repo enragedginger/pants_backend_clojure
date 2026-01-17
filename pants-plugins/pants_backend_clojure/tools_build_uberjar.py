@@ -29,7 +29,7 @@ from pants.jvm.resolve.coursier_fetch import ToolClasspath
 from pants.jvm.target_types import JvmJdkField
 from pants.util.logging import LogLevel
 
-from clojure_backend.subsystems.tools_build import ToolsBuildClasspathRequest
+from pants_backend_clojure.subsystems.tools_build import ToolsBuildClasspathRequest
 
 logger = logging.getLogger(__name__)
 

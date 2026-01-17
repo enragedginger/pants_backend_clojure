@@ -3,17 +3,17 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from clojure_backend.namespace_analysis import (
+from pants_backend_clojure.namespace_analysis import (
     ClojureNamespaceAnalysis,
     ClojureNamespaceAnalysisRequest,
 )
-from clojure_backend.target_types import (
+from pants_backend_clojure.target_types import (
     ClojureSourceField,
     ClojureSourceTarget,
     ClojureTestSourceField,
     ClojureTestTarget,
 )
-from clojure_backend.utils.source_roots import determine_source_root
+from pants_backend_clojure.utils.source_roots import determine_source_root
 from pants.core.goals.repl import ReplImplementation, ReplRequest
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
 from pants.core.util_rules.system_binaries import BashBinary

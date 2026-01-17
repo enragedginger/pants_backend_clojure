@@ -12,23 +12,23 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.dependency_inference import (
+from pants_backend_clojure.dependency_inference import (
     InferClojureSourceDependencies,
     InferClojureTestDependencies,
 )
-from clojure_backend.dependency_inference import rules as dependency_inference_rules
-from clojure_backend.clojure_symbol_mapping import rules as clojure_symbol_mapping_rules
-from clojure_backend.namespace_analysis import rules as namespace_analysis_rules
-from clojure_backend.goals.test import ClojureTestFieldSet, ClojureTestRequest
-from clojure_backend.goals.test import rules as test_runner_rules
-from clojure_backend.target_types import (
+from pants_backend_clojure.dependency_inference import rules as dependency_inference_rules
+from pants_backend_clojure.clojure_symbol_mapping import rules as clojure_symbol_mapping_rules
+from pants_backend_clojure.namespace_analysis import rules as namespace_analysis_rules
+from pants_backend_clojure.goals.test import ClojureTestFieldSet, ClojureTestRequest
+from pants_backend_clojure.goals.test import rules as test_runner_rules
+from pants_backend_clojure.target_types import (
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,
     ClojureTestsGeneratorTarget,
     ClojureTestTarget,
 )
-from clojure_backend.target_types import rules as target_types_rules
-from clojure_backend import compile_clj
+from pants_backend_clojure.target_types import rules as target_types_rules
+from pants_backend_clojure import compile_clj
 from pants.core.goals.test import TestResult
 from pants.core.util_rules import config_files, external_tool, source_files, stripped_source_files, system_binaries
 from pants.jvm import classpath, jvm_common, non_jvm_dependencies
@@ -162,7 +162,7 @@ def test_infer_clojure_source_dependency(rule_runner: RuleRunner) -> None:
     )
 
     # Request inference for the test
-    from clojure_backend.dependency_inference import ClojureTestDependenciesInferenceFieldSet
+    from pants_backend_clojure.dependency_inference import ClojureTestDependenciesInferenceFieldSet
 
     inferred = rule_runner.request(
         InferredDependencies,
@@ -240,7 +240,7 @@ def test_infer_clojure_test_dependency(rule_runner: RuleRunner) -> None:
     )
 
     # Request inference for the test
-    from clojure_backend.dependency_inference import ClojureTestDependenciesInferenceFieldSet
+    from pants_backend_clojure.dependency_inference import ClojureTestDependenciesInferenceFieldSet
 
     inferred = rule_runner.request(
         InferredDependencies,

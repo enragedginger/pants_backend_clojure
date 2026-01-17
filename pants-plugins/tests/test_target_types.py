@@ -4,7 +4,7 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.target_types import (
+from pants_backend_clojure.target_types import (
     ClojureDeployJarTarget,
     ClojureMainNamespaceField,
     ClojureSourceField,
@@ -18,7 +18,7 @@ from clojure_backend.target_types import (
     ClojureTestTarget,
     ClojureTestTimeoutField,
 )
-from clojure_backend.target_types import rules as target_types_rules
+from pants_backend_clojure.target_types import rules as target_types_rules
 from pants.build_graph.address import Address
 from pants.engine.internals.graph import _TargetParametrizations, _TargetParametrizationsRequest
 from pants.engine.rules import QueryRule

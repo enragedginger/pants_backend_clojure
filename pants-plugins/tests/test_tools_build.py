@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from clojure_backend.subsystems.tools_build import (
+from pants_backend_clojure.subsystems.tools_build import (
     ToolsBuildClasspathRequest,
     ToolsBuildSubsystem,
     rules as tools_build_rules,

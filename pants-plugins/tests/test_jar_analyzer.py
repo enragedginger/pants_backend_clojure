@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from clojure_backend.utils.jar_analyzer import (
+from pants_backend_clojure.utils.jar_analyzer import (
     analyze_jar_for_namespaces,
     is_clojure_jar,
     namespace_from_class_path,

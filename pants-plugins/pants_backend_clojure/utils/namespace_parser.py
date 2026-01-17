@@ -4,7 +4,7 @@ This module provides utility functions for converting between Clojure
 namespace names and file paths, as well as checking for JDK classes.
 
 For parsing Clojure source files to extract namespaces, requires, and imports,
-use the ClojureNamespaceAnalysis rule from clojure_backend.namespace_analysis,
+use the ClojureNamespaceAnalysis rule from pants_backend_clojure.namespace_analysis,
 which properly invokes clj-kondo inside the Pants sandbox.
 """
 
@@ -97,6 +97,6 @@ def is_jdk_class(class_name: str) -> bool:
         - sun.* (internal, discouraged but sometimes used)
         - jdk.* (JDK 9+ modules)
     """
-    from clojure_backend.config import JDK_PACKAGE_PREFIXES
+    from pants_backend_clojure.config import JDK_PACKAGE_PREFIXES
 
     return any(class_name.startswith(prefix) for prefix in JDK_PACKAGE_PREFIXES)

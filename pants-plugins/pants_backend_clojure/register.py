@@ -1,6 +1,6 @@
 """Clojure backend for Pants."""
 
-from clojure_backend import (
+from pants_backend_clojure import (
     clojure_symbol_mapping,
     compile_clj,
     dependency_inference,
@@ -8,8 +8,8 @@ from clojure_backend import (
     provided_dependencies,
     tools_build_uberjar,
 )
-from clojure_backend.subsystems import tools_build
-from clojure_backend.goals import (
+from pants_backend_clojure.subsystems import tools_build
+from pants_backend_clojure.goals import (
     check,
     fmt,
     generate_clojure_lockfile_metadata,
@@ -19,7 +19,7 @@ from clojure_backend.goals import (
     repl,
     test,
 )
-from clojure_backend.target_types import (
+from pants_backend_clojure.target_types import (
     ClojureDeployJarTarget,
     ClojureSourceTarget,
     ClojureSourcesGeneratorTarget,

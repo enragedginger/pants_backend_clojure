@@ -2,7 +2,7 @@
 
 import pytest
 
-from clojure_backend.utils.namespace_parser import (
+from pants_backend_clojure.utils.namespace_parser import (
     namespace_to_path,
     path_to_namespace,
     class_to_path,

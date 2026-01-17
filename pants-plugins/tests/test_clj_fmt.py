@@ -4,13 +4,13 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.goals.fmt import CljfmtRequest
-from clojure_backend.goals.fmt import rules as fmt_rules
-from clojure_backend.target_types import (
+from pants_backend_clojure.goals.fmt import CljfmtRequest
+from pants_backend_clojure.goals.fmt import rules as fmt_rules
+from pants_backend_clojure.target_types import (
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,
 )
-from clojure_backend.target_types import rules as target_types_rules
+from pants_backend_clojure.target_types import rules as target_types_rules
 from pants.core.goals.fmt import FmtResult
 from pants.core.util_rules import config_files, external_tool, source_files
 from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
@@ -49,7 +49,7 @@ def run_cljfmt(
 ) -> FmtResult:
     rule_runner.set_options(
         [
-            "--backend-packages=clojure_backend",
+            "--backend-packages=pants_backend_clojure",
             *(extra_args or []),
         ],
         env_inherit={"PATH", "PYENV_ROOT", "HOME"},
@@ -288,7 +288,7 @@ def test_cljfmt_respects_skip_option(rule_runner: RuleRunner) -> None:
     # This test just verifies the subsystem option exists
     # Actual skipping behavior is tested at the Pants fmt goal level
     rule_runner.set_options(
-        ["--backend-packages=clojure_backend", "--cljfmt-skip"],
+        ["--backend-packages=pants_backend_clojure", "--cljfmt-skip"],
         env_inherit={"PATH", "PYENV_ROOT", "HOME"},
     )
     # If we get here without error, the option exists

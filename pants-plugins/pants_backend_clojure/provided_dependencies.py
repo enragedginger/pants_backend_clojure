@@ -12,7 +12,7 @@ from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmArtifactArtifactField, JvmArtifactGroupField
 from pants.util.ordered_set import FrozenOrderedSet
 
-from clojure_backend.target_types import ClojureProvidedDependenciesField
+from pants_backend_clojure.target_types import ClojureProvidedDependenciesField
 
 
 @dataclass(frozen=True)

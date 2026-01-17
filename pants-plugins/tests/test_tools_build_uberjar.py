@@ -8,13 +8,13 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend import compile_clj
-from clojure_backend.namespace_analysis import rules as namespace_analysis_rules
-from clojure_backend.provided_dependencies import rules as provided_dependencies_rules
-from clojure_backend.subsystems.tools_build import rules as tools_build_rules
-from clojure_backend.target_types import ClojureSourceField, ClojureSourceTarget
-from clojure_backend.target_types import rules as target_types_rules
-from clojure_backend.tools_build_uberjar import (
+from pants_backend_clojure import compile_clj
+from pants_backend_clojure.namespace_analysis import rules as namespace_analysis_rules
+from pants_backend_clojure.provided_dependencies import rules as provided_dependencies_rules
+from pants_backend_clojure.subsystems.tools_build import rules as tools_build_rules
+from pants_backend_clojure.target_types import ClojureSourceField, ClojureSourceTarget
+from pants_backend_clojure.target_types import rules as target_types_rules
+from pants_backend_clojure.tools_build_uberjar import (
     ToolsBuildUberjarRequest,
     ToolsBuildUberjarResult,
     generate_build_script,

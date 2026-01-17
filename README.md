@@ -25,7 +25,7 @@ pants_version = "2.29.0"
 plugins = ["pants-backend-clojure==0.1.0"]
 backend_packages = [
     "pants.backend.experimental.java",
-    "clojure_backend",
+    "pants_backend_clojure",
 ]
 
 [coursier]

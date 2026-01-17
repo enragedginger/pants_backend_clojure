@@ -16,8 +16,8 @@ from pants.engine.rules import collect_rules, Get, rule
 from pants.util.logging import LogLevel
 from pants.util.strutil import pluralize
 
-from clojure_backend.subsystems.cljfmt import Cljfmt
-from clojure_backend.target_types import CljfmtFieldSet
+from pants_backend_clojure.subsystems.cljfmt import Cljfmt
+from pants_backend_clojure.target_types import CljfmtFieldSet
 
 
 class CljfmtRequest(FmtTargetsRequest):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from clojure_backend.target_types import (
+from pants_backend_clojure.target_types import (
     ClojureFieldSet,
     ClojureGeneratorFieldSet,
     ClojureSourceField,

@@ -4,7 +4,7 @@ from textwrap import dedent
 
 import pytest
 
-from clojure_backend.goals.generate_deps import (
+from pants_backend_clojure.goals.generate_deps import (
     GenerateDepsEdn,
     LockFileEntry,
     _repo_name_from_url,
@@ -13,15 +13,15 @@ from clojure_backend.goals.generate_deps import (
     format_mvn_repos,
     parse_lock_file,
 )
-from clojure_backend.goals.generate_deps import rules as generate_deps_edn_rules
-from clojure_backend.namespace_analysis import rules as namespace_analysis_rules
-from clojure_backend.target_types import (
+from pants_backend_clojure.goals.generate_deps import rules as generate_deps_edn_rules
+from pants_backend_clojure.namespace_analysis import rules as namespace_analysis_rules
+from pants_backend_clojure.target_types import (
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,
     ClojureTestsGeneratorTarget,
     ClojureTestTarget,
 )
-from clojure_backend.target_types import rules as target_types_rules
+from pants_backend_clojure.target_types import rules as target_types_rules
 from pants.backend.java.target_types import JavaSourcesGeneratorTarget
 from pants.core.util_rules import config_files, external_tool, source_files, stripped_source_files, system_binaries
 from pants.engine.rules import QueryRule
@@ -34,7 +34,7 @@ from pants.jvm.target_types import JvmArtifactTarget
 from pants.jvm.util_rules import rules as jdk_util_rules
 from pants.testutil.rule_runner import PYTHON_BOOTSTRAP_ENV, RuleRunner
 
-from clojure_backend import compile_clj
+from pants_backend_clojure import compile_clj
 
 
 @pytest.fixture
@@ -320,7 +320,7 @@ def test_format_deps_edn_deps_duplicate_same_version() -> None:
 
 def test_format_deps_edn_complete() -> None:
     """Test formatting a complete deps.edn file."""
-    from clojure_backend.goals.generate_deps import ClojureSourcesInfo
+    from pants_backend_clojure.goals.generate_deps import ClojureSourcesInfo
 
     sources_info = ClojureSourcesInfo(
         source_paths={"projects/foo/src", "projects/bar/src"},
@@ -360,7 +360,7 @@ def test_format_deps_edn_complete() -> None:
 
 def test_format_deps_edn_no_test_paths() -> None:
     """Test formatting deps.edn when there are no test paths."""
-    from clojure_backend.goals.generate_deps import ClojureSourcesInfo
+    from pants_backend_clojure.goals.generate_deps import ClojureSourcesInfo
 
     sources_info = ClojureSourcesInfo(
         source_paths={"src"},
@@ -380,7 +380,7 @@ def test_format_deps_edn_no_test_paths() -> None:
 
 def test_format_deps_edn_no_source_paths() -> None:
     """Test formatting deps.edn when there are no source paths."""
-    from clojure_backend.goals.generate_deps import ClojureSourcesInfo
+    from pants_backend_clojure.goals.generate_deps import ClojureSourcesInfo
 
     sources_info = ClojureSourcesInfo(
         source_paths=set(),
@@ -463,7 +463,7 @@ def test_format_mvn_repos_collision_handling() -> None:
 
 def test_format_deps_edn_with_repos() -> None:
     """Test formatting deps.edn with repository configuration."""
-    from clojure_backend.goals.generate_deps import ClojureSourcesInfo
+    from pants_backend_clojure.goals.generate_deps import ClojureSourcesInfo
 
     sources_info = ClojureSourcesInfo(
         source_paths={"src"},
@@ -491,7 +491,7 @@ def test_format_deps_edn_with_repos() -> None:
 
 def test_format_deps_edn_no_repos() -> None:
     """Test that :mvn/repos is omitted when repos is None or empty."""
-    from clojure_backend.goals.generate_deps import ClojureSourcesInfo
+    from pants_backend_clojure.goals.generate_deps import ClojureSourcesInfo
 
     sources_info = ClojureSourcesInfo(
         source_paths={"src"},
