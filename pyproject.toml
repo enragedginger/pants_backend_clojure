@@ -22,9 +22,9 @@ classifiers = [
 ]
 
 [project.urls]
-Repository = "https://github.com/stephenmhopper/pants-backend-clojure"
-Documentation = "https://github.com/stephenmhopper/pants-backend-clojure#readme"
-Issues = "https://github.com/stephenmhopper/pants-backend-clojure/issues"
+Repository = "https://github.com/enragedginger/pants-backend-clojure"
+Documentation = "https://github.com/enragedginger/pants-backend-clojure#readme"
+Issues = "https://github.com/enragedginger/pants-backend-clojure/issues"
 
 [build-system]
 requires = ["hatchling"]
