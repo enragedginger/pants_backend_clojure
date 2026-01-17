@@ -3,3 +3,5 @@
 *.iml
 /.idea
 /.cache
+.claude/settings.local.json
+/deps.edn
