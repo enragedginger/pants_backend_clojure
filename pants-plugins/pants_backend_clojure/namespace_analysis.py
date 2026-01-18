@@ -12,12 +12,17 @@ import json
 import logging
 from dataclasses import dataclass
 
-from pants.core.util_rules.config_files import ConfigFiles, ConfigFilesRequest
-from pants.core.util_rules.external_tool import DownloadedExternalTool, ExternalToolRequest
+from pants.core.util_rules.config_files import ConfigFiles, ConfigFilesRequest, find_config_file
+from pants.core.util_rules.external_tool import (
+    DownloadedExternalTool,
+    ExternalToolRequest,
+    download_external_tool,
+)
 from pants.engine.fs import Digest, MergeDigests, Snapshot
+from pants.engine.intrinsics import execute_process, merge_digests
 from pants.engine.platform import Platform
 from pants.engine.process import FallibleProcessResult, Process
-from pants.engine.rules import collect_rules, Get, rule
+from pants.engine.rules import collect_rules, implicitly, rule
 from pants.util.frozendict import FrozenDict
 from pants.util.logging import LogLevel
 from pants.util.strutil import pluralize
@@ -78,15 +83,10 @@ async def analyze_clojure_namespaces(
         )
 
     # Download clj-kondo binary
-    downloaded = await Get(
-        DownloadedExternalTool,
-        ExternalToolRequest,
-        clj_kondo.get_request(platform),
-    )
+    downloaded = await download_external_tool(clj_kondo.get_request(platform))
 
     # Find config files if discovery is enabled
-    config_files = await Get(
-        ConfigFiles,
+    config_files = await find_config_file(
         ConfigFilesRequest(
             discovery=clj_kondo.config_discovery,
             check_existence=[".clj-kondo/config.edn"],
@@ -94,8 +94,7 @@ async def analyze_clojure_namespaces(
     )
 
     # Merge source files, clj-kondo binary, and config files
-    input_digest = await Get(
-        Digest,
+    input_digest = await merge_digests(
         MergeDigests([
             request.snapshot.digest,
             downloaded.digest,
@@ -104,8 +103,7 @@ async def analyze_clojure_namespaces(
     )
 
     # Run clj-kondo analysis in batch mode on all files
-    result = await Get(
-        FallibleProcessResult,
+    result = await execute_process(
         Process(
             argv=[
                 downloaded.exe,
@@ -118,6 +116,7 @@ async def analyze_clojure_namespaces(
             description=f"Analyze {pluralize(len(request.snapshot.files), 'Clojure file')} with clj-kondo",
             level=LogLevel.DEBUG,
         ),
+        **implicitly(),
     )
 
     # Parse JSON output - clj-kondo may return non-zero for lint warnings, that's ok

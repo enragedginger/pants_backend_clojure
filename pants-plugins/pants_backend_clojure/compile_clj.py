@@ -8,10 +8,14 @@ from pants_backend_clojure.target_types import (
     ClojureTestGeneratorFieldSet,
     ClojureTestSourceField,
 )
-from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
-from pants.core.util_rules.stripped_source_files import StrippedSourceFiles
+from pants.core.util_rules.source_files import (
+    SourceFiles,
+    SourceFilesRequest,
+    determine_source_files,
+)
+from pants.core.util_rules.stripped_source_files import StrippedSourceFiles, strip_source_roots
 from pants.engine.fs import Digest, MergeDigests
-from pants.engine.internals.selectors import Get
+from pants.engine.intrinsics import merge_digests
 from pants.engine.rules import collect_rules, implicitly, rule
 from pants.engine.unions import UnionRule
 from pants.jvm.compile import (
@@ -70,8 +74,7 @@ async def compile_clojure_source(
 
     if not members_with_sources:
         # Generator target - merge all dependency digests
-        merged_digest = await Get(
-            Digest,
+        merged_digest = await merge_digests(
             MergeDigests([cpe.digest for cpe in direct_dependency_classpath_entries]),
         )
         classpath_entry = ClasspathEntry.merge(
@@ -85,8 +88,7 @@ async def compile_clojure_source(
         )
 
     # Get source files for targets with sources
-    source_files = await Get(
-        SourceFiles,
+    source_files = await determine_source_files(
         SourceFilesRequest(
             (t.get(ClojureSourceField) if t.has_field(ClojureSourceField)
              else t.get(ClojureTestSourceField)
@@ -99,11 +101,10 @@ async def compile_clojure_source(
     # Strip source roots so files are at proper paths for Clojure's namespace resolution
     # e.g., projects/example/project-a/test/example/project_a/core_test.clj
     # becomes example/project_a/core_test.clj
-    stripped_sources = await Get(StrippedSourceFiles, SourceFiles, source_files)
+    stripped_sources = await strip_source_roots(source_files)
 
     # Merge stripped source files with dependency digests
-    merged_digest = await Get(
-        Digest,
+    merged_digest = await merge_digests(
         MergeDigests([
             stripped_sources.snapshot.digest,
             *(cpe.digest for cpe in direct_dependency_classpath_entries),

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pants.engine.internals.selectors import Get
 from pants.engine.rules import collect_rules, rule
 from pants.jvm.resolve.common import ArtifactRequirement, ArtifactRequirements, Coordinate
-from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
+from pants.jvm.resolve.coursier_fetch import (
+    ToolClasspath,
+    ToolClasspathRequest,
+    materialize_classpath_for_tool,
+)
 from pants.option.option_types import StrOption
 from pants.option.subsystem import Subsystem
 from pants.util.strutil import softwrap
@@ -49,8 +52,7 @@ async def get_tools_build_classpath(
     tools_build: ToolsBuildSubsystem,
 ) -> ToolClasspath:
     """Fetch the tools.build classpath using Coursier."""
-    return await Get(
-        ToolClasspath,
+    return await materialize_classpath_for_tool(
         ToolClasspathRequest(
             artifact_requirements=ArtifactRequirements([
                 ArtifactRequirement(

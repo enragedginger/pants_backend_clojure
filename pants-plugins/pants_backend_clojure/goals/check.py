@@ -5,17 +5,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pants.core.goals.check import CheckRequest, CheckResult, CheckResults
-from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
-from pants.core.util_rules.stripped_source_files import StrippedSourceFiles
+from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest, determine_source_files
+from pants.core.util_rules.stripped_source_files import StrippedSourceFiles, strip_source_roots
 from pants.engine.addresses import Addresses
 from pants.engine.fs import CreateDigest, Digest, FileContent, MergeDigests
-from pants.engine.internals.selectors import Get, MultiGet
+from pants.engine.intrinsics import create_digest, execute_process, merge_digests
 from pants.engine.process import FallibleProcessResult, Process
-from pants.engine.rules import collect_rules, implicitly, rule
+from pants.engine.rules import collect_rules, concurrently, implicitly, rule
 from pants.engine.target import FieldSet
 from pants.engine.unions import UnionRule
 from pants.jvm.classpath import Classpath, classpath
-from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest, JvmProcess
+from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest, JvmProcess, jvm_process, prepare_jdk_environment
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmJdkField, JvmResolveField
 from pants.util.logging import LogLevel
@@ -23,6 +23,7 @@ from pants.util.logging import LogLevel
 from pants_backend_clojure.namespace_analysis import (
     ClojureNamespaceAnalysis,
     ClojureNamespaceAnalysisRequest,
+    analyze_clojure_namespaces,
 )
 from pants_backend_clojure.subsystems.clojure_check import ClojureCheckSubsystem
 from pants_backend_clojure.target_types import ClojureSourceField
@@ -114,21 +115,21 @@ async def check_clojure_field_set(
     # conflicts when a clojure_source depends directly on jvm_artifact(clojure).
     jdk_request = JdkRequest.from_field(field_set.jdk_version)
 
-    jdk, clspath = await MultiGet(
-        Get(JdkEnvironment, JdkRequest, jdk_request),
-        classpath(**implicitly(Addresses([field_set.address]))),
+    jdk, clspath = await concurrently(
+        prepare_jdk_environment(**implicitly({jdk_request: JdkRequest})),
+        classpath(**implicitly({Addresses([field_set.address]): Addresses})),
     )
 
     # Get source files and extract namespaces
-    sources = await Get(SourceFiles, SourceFilesRequest([field_set.sources]))
+    sources = await determine_source_files(SourceFilesRequest([field_set.sources]))
 
     # Strip source roots so files are at proper paths for Clojure's namespace resolution
-    stripped_sources = await Get(StrippedSourceFiles, SourceFiles, sources)
+    stripped_sources = await strip_source_roots(sources)
 
     # Use clj-kondo analysis to extract namespace declarations
-    namespace_analysis = await Get(
-        ClojureNamespaceAnalysis,
+    namespace_analysis = await analyze_clojure_namespaces(
         ClojureNamespaceAnalysisRequest(sources.snapshot),
+        **implicitly(),
     )
 
     # Collect namespaces from analysis, falling back to path inference for syntax errors
@@ -157,14 +158,12 @@ async def check_clojure_field_set(
     loader_script = _create_loader_script(namespaces, clojure_check)
 
     # Prepare digest with the loader script
-    loader_digest = await Get(
-        Digest,
+    loader_digest = await create_digest(
         CreateDigest([FileContent("check_loader.clj", loader_script.encode())]),
     )
 
     # Merge loader script with sources and classpath digests
-    input_digest = await Get(
-        Digest,
+    input_digest = await merge_digests(
         MergeDigests([
             loader_digest,
             stripped_sources.snapshot.digest,
@@ -183,7 +182,7 @@ async def check_clojure_field_set(
     ]
 
     # Create JVM process to run the check
-    jvm_process = JvmProcess(
+    jvm_proc = JvmProcess(
         jdk=jdk,
         classpath_entries=classpath_entries,
         argv=["clojure.main", "check_loader.clj"],
@@ -193,8 +192,8 @@ async def check_clojure_field_set(
         extra_jvm_options=extra_jvm_args,
     )
 
-    process = await Get(Process, JvmProcess, jvm_process)
-    result = await Get(FallibleProcessResult, Process, process)
+    process = await jvm_process(**implicitly({jvm_proc: JvmProcess}))
+    result = await execute_process(process, **implicitly())
 
     return CheckResult(
         exit_code=result.exit_code,
@@ -214,9 +213,9 @@ async def check_clojure(
     if clojure_check.skip:
         return CheckResults([], checker_name="Clojure check")
 
-    # Process all field sets in parallel using MultiGet
-    results = await MultiGet(
-        Get(CheckResult, ClojureCheckFieldSetRequest(field_set))
+    # Process all field sets in parallel using concurrently
+    results = await concurrently(
+        check_clojure_field_set(ClojureCheckFieldSetRequest(field_set), **implicitly())
         for field_set in request.field_sets
     )
 

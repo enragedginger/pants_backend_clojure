@@ -12,36 +12,32 @@ from pants.core.goals.package import (
     OutputPathField,
     PackageFieldSet,
 )
-from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
-from pants.core.util_rules.stripped_source_files import StrippedSourceFiles
+from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
+from pants.core.util_rules.stripped_source_files import strip_source_roots
 from pants.engine.addresses import Addresses
 from pants.engine.fs import (
     CreateDigest,
-    Digest,
-    DigestContents,
     EMPTY_DIGEST,
     FileContent,
     MergeDigests,
 )
-from pants.engine.internals.selectors import Get, MultiGet
-from pants.engine.rules import collect_rules, rule
-from pants.engine.target import (
-    TransitiveTargets,
-    TransitiveTargetsRequest,
-)
+from pants.engine.internals.graph import transitive_targets
+from pants.engine.intrinsics import create_digest, get_digest_contents, merge_digests
+from pants.engine.rules import collect_rules, concurrently, implicitly, rule
+from pants.engine.target import TransitiveTargetsRequest
 from pants.engine.unions import UnionRule
-from pants.jvm.classpath import Classpath
+from pants.jvm.classpath import classpath as classpath_get
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmJdkField, JvmResolveField
 from pants.util.logging import LogLevel
 
 from pants_backend_clojure.namespace_analysis import (
-    ClojureNamespaceAnalysis,
     ClojureNamespaceAnalysisRequest,
+    analyze_clojure_namespaces,
 )
 from pants_backend_clojure.provided_dependencies import (
-    ProvidedDependencies,
     ResolveProvidedDependenciesRequest,
+    resolve_provided_dependencies,
 )
 from pants_backend_clojure.target_types import (
     ClojureMainNamespaceField,
@@ -51,7 +47,7 @@ from pants_backend_clojure.target_types import (
 )
 from pants_backend_clojure.tools_build_uberjar import (
     ToolsBuildUberjarRequest,
-    ToolsBuildUberjarResult,
+    build_uberjar_with_tools_build,
 )
 
 logger = logging.getLogger(__name__)
@@ -123,23 +119,21 @@ async def package_clojure_deploy_jar(
     skip_aot = main_namespace == "clojure.main"
 
     # Get transitive targets to find all Clojure sources
-    transitive_targets = await Get(
-        TransitiveTargets,
-        TransitiveTargetsRequest([field_set.address]),
+    trans_targets = await transitive_targets(
+        TransitiveTargetsRequest([field_set.address]), **implicitly()
     )
 
     # Find all Clojure source targets in dependencies
     clojure_source_targets = [
         tgt
-        for tgt in transitive_targets.dependencies
+        for tgt in trans_targets.dependencies
         if tgt.has_field(ClojureSourceField) or tgt.has_field(ClojureTestSourceField)
     ]
 
     # Get provided dependencies to exclude from the JAR
     resolve_name = field_set.resolve.normalized_value(jvm)
-    provided_deps = await Get(
-        ProvidedDependencies,
-        ResolveProvidedDependenciesRequest(field_set.provided, resolve_name),
+    provided_deps = await resolve_provided_dependencies(
+        ResolveProvidedDependenciesRequest(field_set.provided, resolve_name), **implicitly()
     )
 
     # Determine output filename
@@ -156,7 +150,9 @@ async def package_clojure_deploy_jar(
         )
 
         # Get classpath (excluding provided deps via address filtering)
-        runtime_classpath = await Get(Classpath, Addresses, runtime_source_addresses)
+        runtime_classpath = await classpath_get(
+            **implicitly({runtime_source_addresses: Addresses})
+        )
 
         # Get first-party source files with stripped roots
         first_party_source_fields = [
@@ -167,13 +163,13 @@ async def package_clojure_deploy_jar(
         ]
 
         if first_party_source_fields:
-            stripped_sources = await Get(
-                StrippedSourceFiles,
+            first_party_sources = await determine_source_files(
                 SourceFilesRequest(
                     first_party_source_fields,
                     for_sources_types=(ClojureSourceField, ClojureTestSourceField),
                 ),
             )
+            stripped_sources = await strip_source_roots(first_party_sources)
             source_digest = stripped_sources.snapshot.digest
         else:
             source_digest = EMPTY_DIGEST
@@ -184,9 +180,11 @@ async def package_clojure_deploy_jar(
             excluded_artifact_prefixes.add(f"{group}_{artifact}_")
 
         # Get dependency JAR contents
-        merged_classpath = await Get(Digest, MergeDigests(runtime_classpath.digests()))
-        classpath_contents = await Get(DigestContents, Digest, merged_classpath)
-        source_contents = await Get(DigestContents, Digest, source_digest)
+        merged_classpath = await merge_digests(MergeDigests(runtime_classpath.digests()))
+        classpath_contents, source_contents = await concurrently(
+            get_digest_contents(merged_classpath),
+            get_digest_contents(source_digest),
+        )
 
         # Create the JAR in memory
         jar_buffer = io.BytesIO()
@@ -234,8 +232,7 @@ X-Source-Only: true
 
         # Create output
         jar_bytes_data = jar_buffer.getvalue()
-        output_digest = await Get(
-            Digest,
+        output_digest = await create_digest(
             CreateDigest([FileContent(output_filename, jar_bytes_data)]),
         )
 
@@ -262,17 +259,15 @@ X-Source-Only: true
             f"Ensure the target has dependencies on clojure_source targets."
         )
 
-    source_files = await Get(
-        SourceFiles,
+    source_files = await determine_source_files(
         SourceFilesRequest(source_fields),
     )
 
     # Analyze source files to validate main namespace has (:gen-class)
-    namespace_analysis = await Get(
-        ClojureNamespaceAnalysis,
-        ClojureNamespaceAnalysisRequest(source_files.snapshot),
+    namespace_analysis = await analyze_clojure_namespaces(
+        ClojureNamespaceAnalysisRequest(source_files.snapshot), **implicitly()
     )
-    digest_contents = await Get(DigestContents, Digest, source_files.snapshot.digest)
+    digest_contents = await get_digest_contents(source_files.snapshot.digest)
 
     # Validate main namespace has (:gen-class)
     # Build reverse mapping: namespace -> file path
@@ -327,9 +322,9 @@ X-Source-Only: true
     # Get both classpaths:
     # - compile_classpath: ALL deps including provided (for AOT compilation)
     # - runtime_classpath: Only runtime deps excluding provided (for packaging)
-    compile_classpath, runtime_classpath = await MultiGet(
-        Get(Classpath, Addresses, all_source_addresses),
-        Get(Classpath, Addresses, runtime_source_addresses),
+    compile_classpath, runtime_classpath = await concurrently(
+        classpath_get(**implicitly({all_source_addresses: Addresses})),
+        classpath_get(**implicitly({runtime_source_addresses: Addresses})),
     )
 
     # Get stripped source files for RUNTIME first-party code (excluding provided)
@@ -351,13 +346,13 @@ X-Source-Only: true
 
     # Get both sets of stripped sources
     if runtime_source_fields:
-        stripped_runtime_sources = await Get(
-            StrippedSourceFiles,
+        runtime_sources = await determine_source_files(
             SourceFilesRequest(
                 runtime_source_fields,
                 for_sources_types=(ClojureSourceField, ClojureTestSourceField),
             ),
         )
+        stripped_runtime_sources = await strip_source_roots(runtime_sources)
         runtime_source_digest = stripped_runtime_sources.snapshot.digest
     else:
         runtime_source_digest = EMPTY_DIGEST
@@ -365,23 +360,21 @@ X-Source-Only: true
     provided_namespaces: tuple[str, ...] = ()
     if provided_source_fields:
         # Get stripped sources for provided deps
-        stripped_provided_sources = await Get(
-            StrippedSourceFiles,
+        provided_sources = await determine_source_files(
             SourceFilesRequest(
                 provided_source_fields,
                 for_sources_types=(ClojureSourceField, ClojureTestSourceField),
             ),
         )
+        stripped_provided_sources = await strip_source_roots(provided_sources)
         provided_source_digest = stripped_provided_sources.snapshot.digest
 
         # Analyze provided sources to get their namespace names (for exclusion patterns)
-        provided_source_files = await Get(
-            SourceFiles,
+        provided_source_files = await determine_source_files(
             SourceFilesRequest(provided_source_fields),
         )
-        provided_ns_analysis = await Get(
-            ClojureNamespaceAnalysis,
-            ClojureNamespaceAnalysisRequest(provided_source_files.snapshot),
+        provided_ns_analysis = await analyze_clojure_namespaces(
+            ClojureNamespaceAnalysisRequest(provided_source_files.snapshot), **implicitly()
         )
         provided_namespaces = tuple(provided_ns_analysis.namespaces.values())
     else:
@@ -398,8 +391,7 @@ X-Source-Only: true
     )
 
     # Build uberjar with tools.build
-    result = await Get(
-        ToolsBuildUberjarResult,
+    result = await build_uberjar_with_tools_build(
         ToolsBuildUberjarRequest(
             main_namespace=main_namespace,
             main_class=main_class,
@@ -411,6 +403,7 @@ X-Source-Only: true
             provided_jar_prefixes=provided_jar_prefixes,
             jdk=field_set.jdk,
         ),
+        **implicitly(),
     )
 
     # Rename output JAR to desired filename
@@ -419,10 +412,9 @@ X-Source-Only: true
         final_digest = result.digest
     else:
         # Read the JAR contents and write with new name
-        jar_contents = await Get(DigestContents, Digest, result.digest)
+        jar_contents = await get_digest_contents(result.digest)
         if jar_contents:
-            final_digest = await Get(
-                Digest,
+            final_digest = await create_digest(
                 CreateDigest([FileContent(output_filename, jar_contents[0].content)]),
             )
         else:

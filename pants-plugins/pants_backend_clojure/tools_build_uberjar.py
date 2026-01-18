@@ -20,16 +20,16 @@ from dataclasses import dataclass
 from pants.core.util_rules.stripped_source_files import StrippedSourceFiles
 from pants.engine.addresses import Addresses
 from pants.engine.fs import AddPrefix, CreateDigest, Digest, FileContent, MergeDigests
-from pants.engine.internals.selectors import Get, MultiGet
+from pants.engine.intrinsics import add_prefix, create_digest, execute_process, merge_digests
 from pants.engine.process import FallibleProcessResult, Process
-from pants.engine.rules import collect_rules, rule
+from pants.engine.rules import collect_rules, concurrently, implicitly, rule
 from pants.jvm.classpath import Classpath
-from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest, JvmProcess
+from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest, JvmProcess, jvm_process, prepare_jdk_environment
 from pants.jvm.resolve.coursier_fetch import ToolClasspath
 from pants.jvm.target_types import JvmJdkField
 from pants.util.logging import LogLevel
 
-from pants_backend_clojure.subsystems.tools_build import ToolsBuildClasspathRequest
+from pants_backend_clojure.subsystems.tools_build import ToolsBuildClasspathRequest, get_tools_build_classpath
 
 logger = logging.getLogger(__name__)
 
@@ -242,9 +242,9 @@ async def build_uberjar_with_tools_build(
     # 1. Get tools.build classpath and JDK in parallel
     jdk_request = JdkRequest.from_field(request.jdk) if request.jdk else JdkRequest.SOURCE_DEFAULT
 
-    tools_classpath, jdk = await MultiGet(
-        Get(ToolClasspath, ToolsBuildClasspathRequest()),
-        Get(JdkEnvironment, JdkRequest, jdk_request),
+    tools_classpath, jdk = await concurrently(
+        get_tools_build_classpath(ToolsBuildClasspathRequest(), **implicitly()),
+        prepare_jdk_environment(**implicitly({jdk_request: JdkRequest})),
     )
 
     # 2. Generate build script
@@ -270,28 +270,26 @@ async def build_uberjar_with_tools_build(
     #   compile-libs/       <- All JARs including provided (for AOT)
     #   uber-libs/          <- Runtime JARs excluding provided (for packaging)
 
-    build_script_digest = await Get(
-        Digest,
+    build_script_digest = await create_digest(
         CreateDigest([FileContent("build.clj", build_script.encode())]),
     )
 
     # Put runtime sources under src/ (these get compiled and packaged)
-    src_digest = await Get(Digest, AddPrefix(request.source_digest, "src"))
+    src_digest = await add_prefix(AddPrefix(request.source_digest, "src"))
 
     # Put provided sources under provided-src/ (on classpath for compilation, not packaged)
-    provided_src_digest = await Get(Digest, AddPrefix(request.provided_source_digest, "provided-src"))
+    provided_src_digest = await add_prefix(AddPrefix(request.provided_source_digest, "provided-src"))
 
     # Put compile-time JARs under compile-libs/
-    compile_jars_digest = await Get(Digest, MergeDigests(request.compile_classpath.digests()))
-    compile_libs_digest = await Get(Digest, AddPrefix(compile_jars_digest, "compile-libs"))
+    compile_jars_digest = await merge_digests(MergeDigests(request.compile_classpath.digests()))
+    compile_libs_digest = await add_prefix(AddPrefix(compile_jars_digest, "compile-libs"))
 
     # Put runtime JARs under uber-libs/
-    runtime_jars_digest = await Get(Digest, MergeDigests(request.runtime_classpath.digests()))
-    uber_libs_digest = await Get(Digest, AddPrefix(runtime_jars_digest, "uber-libs"))
+    runtime_jars_digest = await merge_digests(MergeDigests(request.runtime_classpath.digests()))
+    uber_libs_digest = await add_prefix(AddPrefix(runtime_jars_digest, "uber-libs"))
 
     # Merge everything
-    input_digest = await Get(
-        Digest,
+    input_digest = await merge_digests(
         MergeDigests([
             build_script_digest,
             src_digest,
@@ -335,8 +333,8 @@ async def build_uberjar_with_tools_build(
         use_nailgun=False,
     )
 
-    process_obj = await Get(Process, JvmProcess, process)
-    result = await Get(FallibleProcessResult, Process, process_obj)
+    process_obj = await jvm_process(**implicitly({process: JvmProcess}))
+    result = await execute_process(process_obj, **implicitly())
 
     if result.exit_code != 0:
         stdout = result.stdout.decode("utf-8")

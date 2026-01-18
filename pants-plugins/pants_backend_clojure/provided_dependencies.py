@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pants.engine.addresses import Address, UnparsedAddressInputs
+from pants.engine.addresses import Address, Addresses, UnparsedAddressInputs
 from pants.engine.fs import Digest, DigestContents, PathGlobs
-from pants.engine.internals.selectors import Get, MultiGet
-from pants.engine.rules import collect_rules, rule
+from pants.engine.internals.graph import (
+    resolve_targets,
+    resolve_unparsed_address_inputs,
+    transitive_targets,
+)
+from pants.engine.intrinsics import get_digest_contents, path_globs_to_digest
+from pants.engine.rules import collect_rules, concurrently, implicitly, rule
 from pants.engine.target import Targets, TransitiveTargets, TransitiveTargetsRequest
 from pants.jvm.resolve.coursier_fetch import CoursierResolvedLockfile
 from pants.jvm.subsystems import JvmSubsystem
@@ -109,12 +114,13 @@ async def resolve_provided_dependencies(
     # SpecialCasedDependencies provides to_unparsed_address_inputs() method
     unparsed_inputs = field.to_unparsed_address_inputs()
 
-    # Resolve to actual target objects
-    provided_targets = await Get(Targets, UnparsedAddressInputs, unparsed_inputs)
+    # Resolve to actual addresses first, then to targets
+    provided_addresses = await resolve_unparsed_address_inputs(unparsed_inputs, **implicitly())
+    provided_targets = await resolve_targets(**implicitly({provided_addresses: Addresses}))
 
     # Get the transitive closure for each provided dependency
-    all_transitive = await MultiGet(
-        Get(TransitiveTargets, TransitiveTargetsRequest([target.address]))
+    all_transitive = await concurrently(
+        transitive_targets(TransitiveTargetsRequest([target.address]), **implicitly())
         for target in provided_targets
     )
 
@@ -143,8 +149,8 @@ async def resolve_provided_dependencies(
     # This handles dependencies that exist only in the lockfile, not as Pants targets
     if request.resolve_name and coordinates:
         lockfile_path = jvm.resolves[request.resolve_name]
-        lockfile_digest = await Get(Digest, PathGlobs([lockfile_path]))
-        lockfile_contents = await Get(DigestContents, Digest, lockfile_digest)
+        lockfile_digest = await path_globs_to_digest(PathGlobs([lockfile_path]))
+        lockfile_contents = await get_digest_contents(lockfile_digest)
         lockfile = CoursierResolvedLockfile.from_serialized(lockfile_contents[0].content)
 
         # Expand coordinates with Maven transitives from lockfile

@@ -4,8 +4,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from pants_backend_clojure.namespace_analysis import (
-    ClojureNamespaceAnalysis,
     ClojureNamespaceAnalysisRequest,
+    analyze_clojure_namespaces,
 )
 from pants_backend_clojure.target_types import (
     ClojureSourceField,
@@ -15,18 +15,19 @@ from pants_backend_clojure.target_types import (
 )
 from pants_backend_clojure.utils.source_roots import determine_source_root
 from pants.core.goals.repl import ReplImplementation, ReplRequest
-from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
+from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
 from pants.core.util_rules.system_binaries import BashBinary
 from pants.engine.addresses import Address, Addresses
-from pants.engine.fs import Digest, MergeDigests
-from pants.engine.internals.selectors import Get, MultiGet
-from pants.engine.rules import collect_rules, implicitly, rule
-from pants.engine.target import AllTargets, SourcesField, TransitiveTargets, TransitiveTargetsRequest
+from pants.engine.fs import MergeDigests
+from pants.engine.internals.graph import find_all_targets, transitive_targets
+from pants.engine.intrinsics import merge_digests
+from pants.engine.rules import collect_rules, concurrently, implicitly, rule
+from pants.engine.target import AllTargets, TransitiveTargetsRequest
 from pants.engine.unions import UnionRule
 from pants.jvm.classpath import Classpath, classpath as classpath_get
-from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest
+from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest, prepare_jdk_environment
 from pants.jvm.resolve.common import ArtifactRequirement, ArtifactRequirements, Coordinate
-from pants.jvm.resolve.coursier_fetch import ToolClasspath, ToolClasspathRequest
+from pants.jvm.resolve.coursier_fetch import ToolClasspathRequest, materialize_classpath_for_tool
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmJdkField, JvmResolveField
 from pants.option.option_types import BoolOption, IntOption, StrOption
@@ -174,36 +175,39 @@ async def _gather_source_roots(addresses: Addresses) -> set[str]:
     Returns a set of source root paths that should be added to the classpath.
     """
 
-    transitive_targets = await Get(TransitiveTargets, TransitiveTargetsRequest(addresses))
+    trans_targets = await transitive_targets(TransitiveTargetsRequest(addresses), **implicitly())
     source_roots = set()
 
     # Gather source files for all Clojure targets
     source_files_requests = []
     clojure_targets = []
 
-    for tgt in transitive_targets.closure:
+    for tgt in trans_targets.closure:
         if isinstance(tgt, ClojureSourceTarget) and tgt.has_field(ClojureSourceField):
             source_files_requests.append(
-                Get(SourceFiles, SourceFilesRequest([tgt[ClojureSourceField]]))
+                SourceFilesRequest([tgt[ClojureSourceField]])
             )
             clojure_targets.append(tgt)
         elif isinstance(tgt, ClojureTestTarget) and tgt.has_field(ClojureTestSourceField):
             source_files_requests.append(
-                Get(SourceFiles, SourceFilesRequest([tgt[ClojureTestSourceField]]))
+                SourceFilesRequest([tgt[ClojureTestSourceField]])
             )
             clojure_targets.append(tgt)
 
     if not source_files_requests:
         return set()
 
-    all_source_files = await MultiGet(source_files_requests)
+    all_source_files = await concurrently(
+        determine_source_files(req) for req in source_files_requests
+    )
 
     # Use clj-kondo analysis to extract namespaces
-    analysis_requests = [
-        Get(ClojureNamespaceAnalysis, ClojureNamespaceAnalysisRequest(sf.snapshot))
+    all_analyses = await concurrently(
+        analyze_clojure_namespaces(
+            ClojureNamespaceAnalysisRequest(sf.snapshot), **implicitly()
+        )
         for sf in all_source_files
-    ]
-    all_analyses = await MultiGet(analysis_requests)
+    )
 
     # Determine source roots from namespaces
     for i, source_files in enumerate(all_source_files):
@@ -270,8 +274,8 @@ async def _prepare_repl_setup(
     # If load_resolve_sources is enabled, expand to all targets in the resolve
     if load_resolve_sources and addresses:
         # Get transitive targets to determine the resolve
-        initial_transitive = await Get(
-            TransitiveTargets, TransitiveTargetsRequest(addresses)
+        initial_transitive = await transitive_targets(
+            TransitiveTargetsRequest(addresses), **implicitly()
         )
 
         # Find the resolve from the first root target
@@ -283,34 +287,34 @@ async def _prepare_repl_setup(
 
         # If we found a resolve, get all Clojure targets in that resolve
         if resolve_name:
-            all_targets = await Get(AllTargets)
+            all_tgts = await find_all_targets(**implicitly())
             resolve_addresses = await _get_all_clojure_targets_in_resolve(
-                all_targets, jvm, resolve_name
+                all_tgts, jvm, resolve_name
             )
             # Merge with original addresses to ensure they're included
             addresses_to_load = Addresses(sorted(set(addresses) | set(resolve_addresses)))
 
     # Get classpath, transitive targets, and source roots using the (possibly expanded) addresses
-    classpath, transitive_targets, source_roots = await MultiGet(
+    classpath, trans_targets, source_roots = await concurrently(
         classpath_get(**implicitly({addresses_to_load: Addresses})),
-        Get(TransitiveTargets, TransitiveTargetsRequest(addresses_to_load)),
+        transitive_targets(TransitiveTargetsRequest(addresses_to_load), **implicitly()),
         _gather_source_roots(addresses_to_load),
     )
 
     # Extract JDK version from first target that has it, or use default
     jdk_request = JdkRequest.SOURCE_DEFAULT
-    for tgt in transitive_targets.roots:
+    for tgt in trans_targets.roots:
         if tgt.has_field(JvmJdkField):
             jdk_request = JdkRequest.from_field(tgt[JvmJdkField])
             break
 
     # Get JDK environment
-    jdk = await Get(JdkEnvironment, JdkRequest, jdk_request)
+    jdk = await prepare_jdk_environment(**implicitly({jdk_request: JdkRequest}))
 
     return _ReplSetup(
         addresses_to_load=addresses_to_load,
         classpath=classpath,
-        transitive_targets=transitive_targets,
+        transitive_targets=trans_targets,
         source_roots=source_roots,
         jdk=jdk,
     )
@@ -340,8 +344,7 @@ async def create_clojure_repl_request(
 
     # For run_in_workspace=True, don't include source files in digest - they'll be
     # loaded from the workspace. Only include classpath JARs.
-    input_digest = await Get(
-        Digest,
+    input_digest = await merge_digests(
         MergeDigests(setup.classpath.digests()),
     )
 
@@ -402,8 +405,7 @@ async def create_nrepl_request(
     )
 
     # Get nREPL classpath
-    nrepl_classpath = await Get(
-        ToolClasspath,
+    nrepl_classpath = await materialize_classpath_for_tool(
         ToolClasspathRequest(
             artifact_requirements=ArtifactRequirements([nrepl_artifact]),
         ),
@@ -411,8 +413,7 @@ async def create_nrepl_request(
 
     # For run_in_workspace=True, don't include source files in digest - they'll be
     # loaded from the workspace. Only include classpath JARs and nREPL.
-    input_digest = await Get(
-        Digest,
+    input_digest = await merge_digests(
         MergeDigests([
             *setup.classpath.digests(),
             nrepl_classpath.digest,
@@ -495,8 +496,7 @@ async def create_rebel_repl_request(
     )
 
     # Get Rebel classpath
-    rebel_classpath = await Get(
-        ToolClasspath,
+    rebel_classpath = await materialize_classpath_for_tool(
         ToolClasspathRequest(
             artifact_requirements=ArtifactRequirements([rebel_artifact]),
         ),
@@ -504,8 +504,7 @@ async def create_rebel_repl_request(
 
     # For run_in_workspace=True, don't include source files in digest - they'll be
     # loaded from the workspace. Only include classpath JARs and Rebel Readline.
-    input_digest = await Get(
-        Digest,
+    input_digest = await merge_digests(
         MergeDigests([
             *setup.classpath.digests(),
             rebel_classpath.digest,

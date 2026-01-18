@@ -4,14 +4,23 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
+from pants.core.util_rules.source_files import (
+    SourceFiles,
+    SourceFilesRequest,
+    determine_source_files,
+)
 from pants.engine.addresses import Address, Addresses
-from pants.engine.internals.graph import Owners, OwnersRequest
-from pants.engine.internals.selectors import Get, MultiGet
-from pants.engine.rules import collect_rules, rule
+from pants.engine.internals.graph import (
+    Owners,
+    OwnersRequest,
+    determine_explicitly_provided_dependencies,
+    find_owners,
+    resolve_targets,
+)
+from pants.engine.rules import collect_rules, concurrently, implicitly, rule
 from pants.engine.target import (
-    DependenciesRequest,
     ExplicitlyProvidedDependencies,
+    ExplicitlyProvidedDependenciesRequest,
     FieldSet,
     InferDependenciesRequest,
     InferredDependencies,
@@ -29,6 +38,7 @@ from pants_backend_clojure.clojure_symbol_mapping import ClojureNamespaceMapping
 from pants_backend_clojure.namespace_analysis import (
     ClojureNamespaceAnalysis,
     ClojureNamespaceAnalysisRequest,
+    analyze_clojure_namespaces,
 )
 from pants_backend_clojure.target_types import (
     ClojureSourceField,
@@ -112,9 +122,12 @@ async def _infer_clojure_dependencies_impl(
         InferredDependencies containing all resolved dependencies
     """
     # Get explicitly provided dependencies for disambiguation and source file
-    explicitly_provided_deps, source_files = await MultiGet(
-        Get(ExplicitlyProvidedDependencies, DependenciesRequest(field_set.dependencies)),
-        Get(SourceFiles, SourceFilesRequest([field_set.source])),
+    explicitly_provided_deps, source_files = await concurrently(
+        determine_explicitly_provided_dependencies(
+            ExplicitlyProvidedDependenciesRequest(field_set.dependencies),
+            **implicitly(),
+        ),
+        determine_source_files(SourceFilesRequest([field_set.source])),
     )
 
     if not source_files.files:
@@ -122,9 +135,9 @@ async def _infer_clojure_dependencies_impl(
 
     # Analyze source file using clj-kondo to extract requires and imports
     # Pants will memoize this by Snapshot digest for incremental builds
-    namespace_analysis = await Get(
-        ClojureNamespaceAnalysis,
+    namespace_analysis = await analyze_clojure_namespaces(
         ClojureNamespaceAnalysisRequest(source_files.snapshot),
+        **implicitly(),
     )
 
     # Get the file path to look up in analysis results
@@ -157,12 +170,12 @@ async def _infer_clojure_dependencies_impl(
 
         found_first_party = False
         for path in possible_paths:
-            owners = await Get(Owners, OwnersRequest((path,)))
+            owners = await find_owners(OwnersRequest((path,)), **implicitly())
             if owners:
                 # Filter owners to only those with matching resolve
                 # This handles cases where the same file has multiple targets with different resolves
                 # Get actual targets to check their resolve fields
-                owner_targets = await Get(Targets, Addresses(owners))
+                owner_targets = await resolve_targets(**implicitly({Addresses(owners): Addresses}))
 
                 matching_owners = []
                 for target in owner_targets:

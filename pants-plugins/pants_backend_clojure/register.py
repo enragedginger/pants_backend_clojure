@@ -8,7 +8,7 @@ from pants_backend_clojure import (
     provided_dependencies,
     tools_build_uberjar,
 )
-from pants_backend_clojure.subsystems import tools_build
+from pants_backend_clojure.subsystems import clojure_infer, tools_build
 from pants_backend_clojure.goals import (
     check,
     fmt,
@@ -59,4 +59,5 @@ def rules():
         *namespace_analysis.rules(),
         *tools_build.rules(),
         *tools_build_uberjar.rules(),
+        *clojure_infer.rules(),
     ]

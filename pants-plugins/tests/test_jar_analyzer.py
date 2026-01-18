@@ -42,15 +42,26 @@ def create_test_jar(files: dict[str, str]) -> Path:
 # ===== Tests for namespace_from_class_path =====
 
 
-def test_namespace_from_class_path_simple():
-    """Test inferring namespace from simple class path."""
-    assert namespace_from_class_path("clojure/data/json.class") == "clojure.data.json"
-    assert namespace_from_class_path("com/example/utils.class") == "com.example.utils"
+def test_namespace_from_class_path_init_class():
+    """Test extracting namespace from __init.class files."""
+    # __init.class files are the namespace loaders - these are what we want
+    assert namespace_from_class_path("clojure/data/json__init.class") == "clojure.data.json"
+    assert namespace_from_class_path("com/example/utils__init.class") == "com.example.utils"
 
 
-def test_namespace_from_class_path_ignores_init():
-    """Test that __init classes are ignored."""
-    assert namespace_from_class_path("clojure/data/json__init.class") is None
+def test_namespace_from_class_path_demunge_heuristic():
+    """Test that underscores are converted to hyphens (demunge)."""
+    # my_app/core__init.class could be from (ns my-app.core) or (ns my_app.core)
+    # We use the demunge heuristic (underscore -> hyphen) by convention
+    assert namespace_from_class_path("my_app/core__init.class") == "my-app.core"
+    assert namespace_from_class_path("ring/middleware/anti_forgery__init.class") == "ring.middleware.anti-forgery"
+
+
+def test_namespace_from_class_path_ignores_regular_class():
+    """Test that regular .class files (not __init.class) are ignored."""
+    # Regular namespace classes don't have the __init suffix
+    assert namespace_from_class_path("clojure/data/json.class") is None
+    assert namespace_from_class_path("com/example/Utils.class") is None
 
 
 def test_namespace_from_class_path_ignores_fn():
@@ -172,8 +183,24 @@ def test_analyze_jar_with_aot_compiled_classes():
 
     try:
         result = analyze_jar_for_namespaces(jar_path)
-        # Should only detect main namespace class, not __init or $fn variants
+        # Should detect namespace from __init.class file only
         assert result.namespaces == ("clojure.data.json",)
+    finally:
+        jar_path.unlink()
+
+
+def test_analyze_jar_with_aot_hyphenated_namespaces():
+    """Test analyzing AOT JARs with hyphenated namespaces (demunge heuristic)."""
+    jar_path = create_test_jar({
+        "my_app/core__init.class": b"fake init class",
+        "my_app/core.class": b"fake class",
+        "my_app/core$main.class": b"fake function class",
+    })
+
+    try:
+        result = analyze_jar_for_namespaces(jar_path)
+        # Should apply demunge heuristic: underscores -> hyphens
+        assert result.namespaces == ("my-app.core",)
     finally:
         jar_path.unlink()
 
@@ -220,9 +247,8 @@ def test_analyze_jar_with_no_clojure_content():
     try:
         result = analyze_jar_for_namespaces(jar_path)
         # Pure Java JAR - no Clojure namespaces
-        # The class file won't match our filters (no __ or $ check passes, but
-        # it's not obviously a Clojure namespace without source)
-        assert "com.example.Util" in result.namespaces
+        # Only __init.class files are detected, so this should be empty
+        assert result.namespaces == ()
     finally:
         jar_path.unlink()
 

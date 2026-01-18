@@ -6,19 +6,24 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from pants.core.goals.lint import LintResult, LintTargetsRequest
-from pants.core.util_rules.config_files import ConfigFiles, ConfigFilesRequest
-from pants.core.util_rules.external_tool import DownloadedExternalTool, ExternalToolRequest
+from pants.core.util_rules.config_files import ConfigFiles, ConfigFilesRequest, find_config_file
+from pants.core.util_rules.external_tool import (
+    DownloadedExternalTool,
+    ExternalToolRequest,
+    download_external_tool,
+)
 from pants.core.util_rules.partitions import (
     Partition,
     Partitions,
     PartitionerType,
 )
-from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
+from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest, determine_source_files
 from pants.engine.addresses import Addresses
 from pants.engine.fs import Digest, MergeDigests
+from pants.engine.intrinsics import execute_process, merge_digests
 from pants.engine.platform import Platform
 from pants.engine.process import FallibleProcessResult, Process
-from pants.engine.rules import collect_rules, Get, implicitly, rule
+from pants.engine.rules import collect_rules, implicitly, rule
 from pants.jvm.classpath import classpath as classpath_get
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmResolveField
@@ -90,13 +95,10 @@ async def clj_kondo_lint(
     enabled, it also resolves and includes all transitive dependencies.
     """
     # Step 1: Download clj-kondo binary
-    downloaded_clj_kondo = await Get(
-        DownloadedExternalTool, ExternalToolRequest, clj_kondo.get_request(platform)
-    )
+    downloaded_clj_kondo = await download_external_tool(clj_kondo.get_request(platform))
 
     # Step 2: Find config files if discovery is enabled
-    config_files = await Get(
-        ConfigFiles,
+    config_files = await find_config_file(
         ConfigFilesRequest(
             discovery=clj_kondo.config_discovery,
             check_existence=[".clj-kondo/config.edn"],
@@ -104,8 +106,7 @@ async def clj_kondo_lint(
     )
 
     # Step 3: Get source files
-    source_files = await Get(
-        SourceFiles,
+    source_files = await determine_source_files(
         SourceFilesRequest(element.sources for element in request.elements),
     )
 
@@ -125,8 +126,7 @@ async def clj_kondo_lint(
         classpath_digests = list(classpath.digests())
 
     # Step 5: Merge all inputs (includes classpath digests)
-    input_digest = await Get(
-        Digest,
+    input_digest = await merge_digests(
         MergeDigests(
             [
                 source_files.snapshot.digest,
@@ -155,8 +155,7 @@ async def clj_kondo_lint(
     ]
 
     # Step 8: Execute clj-kondo (with cache mapping)
-    result = await Get(
-        FallibleProcessResult,
+    result = await execute_process(
         Process(
             argv=argv,
             input_digest=input_digest,
@@ -164,6 +163,7 @@ async def clj_kondo_lint(
             description=f"Run clj-kondo on {pluralize(len(source_files.snapshot.files), 'file')}.",
             level=LogLevel.DEBUG,
         ),
+        **implicitly(),
     )
 
     # Step 9: Return result with partition description

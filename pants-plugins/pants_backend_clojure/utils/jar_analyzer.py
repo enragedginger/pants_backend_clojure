@@ -61,48 +61,42 @@ class JarNamespaceAnalysis:
 
 
 def namespace_from_class_path(class_path: str) -> str | None:
-    """Infer Clojure namespace from .class file path.
+    """Extract Clojure namespace from __init.class files.
 
-    Some Clojure JARs are AOT-compiled and only contain .class files.
-    This function attempts to infer the namespace from class file paths.
+    Clojure AOT compilation generates these classes per namespace:
+    - my/app/core__init.class    <- Namespace loader (WE WANT THIS)
+    - my/app/core$main.class     <- Named function
+    - my/app/core$fn__1234.class <- Anonymous function
+
+    The __init.class suffix definitively identifies a Clojure namespace.
 
     Args:
         class_path: Path to a .class file within the JAR.
 
     Returns:
         The inferred namespace name, or None if the class file is not
-        a Clojure namespace class.
+        a Clojure namespace __init class.
 
     Examples:
-        "clojure/data/json.class" -> "clojure.data.json"
-        "clojure/data/json__init.class" -> None (internal class)
-        "clojure/data/json$fn.class" -> None (internal class)
-        "com/example/Utils.class" -> "com.example.Utils"
+        "clojure/data/json__init.class" -> "clojure.data.json"
+        "my_app/core__init.class" -> "my-app.core" (demunge heuristic)
+        "clojure/data/json.class" -> None (not __init.class)
+        "clojure/data/json$read_str.class" -> None (function class)
 
-    Note:
-        Clojure generates several classes per namespace:
-        - foo/bar.class - Main namespace class
-        - foo/bar__init.class - Initialization class
-        - foo/bar$fn_name.class - Function classes
-
-        We only want the main namespace class (no __ or $ in the name).
+    LIMITATION: Both `my-app.core` and `my_app.core` compile to `my_app/core__init.class`.
+    We use the demunge heuristic (underscore → hyphen) which works for idiomatic code,
+    but may be wrong for namespaces that intentionally use underscores.
+    Users can override via the `packages` field if needed.
     """
-    if not class_path.endswith('.class'):
+    if not class_path.endswith('__init.class'):
         return None
 
-    # Remove .class extension
-    path = class_path[:-6]
+    # Remove __init.class suffix (12 characters)
+    path = class_path[:-12]
 
-    # Ignore internal Clojure implementation classes
-    # __init, $fn, etc. are not namespace declarations
-    if '__' in path or '$' in path:
-        return None
-
-    # Convert path to namespace: foo/bar/baz -> foo.bar.baz
-    # Note: We keep underscores as-is here since Java class names use underscores
-    # where Clojure namespaces use hyphens. The actual namespace will be
-    # determined from source if available.
-    namespace = path.replace('/', '.')
+    # Convert path to namespace: my/app/core -> my.app.core
+    # Apply demunge heuristic: underscores -> hyphens (convention, not guaranteed)
+    namespace = path.replace('/', '.').replace('_', '-')
 
     return namespace
 

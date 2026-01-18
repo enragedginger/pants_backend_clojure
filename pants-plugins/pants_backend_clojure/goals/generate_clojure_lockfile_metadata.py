@@ -16,12 +16,14 @@ from dataclasses import dataclass
 from pants.engine.console import Console
 from pants.engine.fs import CreateDigest, Digest, DigestContents, FileContent, PathGlobs, Workspace
 from pants.engine.goal import Goal, GoalSubsystem
-from pants.engine.rules import Get, MultiGet, collect_rules, goal_rule, rule
+from pants.engine.intrinsics import create_digest, get_digest_contents, path_globs_to_digest
+from pants.engine.rules import collect_rules, concurrently, implicitly, goal_rule, rule
 from pants.engine.unions import UnionRule
 from pants.jvm.resolve.coursier_fetch import (
     ClasspathEntry,
     CoursierLockfileEntry,
     CoursierResolvedLockfile,
+    coursier_fetch_one_coord,
 )
 from pants.jvm.subsystems import JvmSubsystem
 from pants.util.logging import LogLevel
@@ -91,15 +93,15 @@ async def generate_metadata_for_resolve(
     from pathlib import Path
 
     # Load the lockfile
-    lockfile_contents = await Get(DigestContents, Digest, request.lockfile_digest)
+    lockfile_contents = await get_digest_contents(request.lockfile_digest)
     if not lockfile_contents:
         raise ValueError(f"Could not read lockfile at {request.lockfile_path}")
 
     lockfile = CoursierResolvedLockfile.from_serialized(lockfile_contents[0].content)
 
-    # Fetch all JARs using MultiGet
-    classpath_entries = await MultiGet(
-        Get(ClasspathEntry, CoursierLockfileEntry, entry) for entry in lockfile.entries
+    # Fetch all JARs using concurrently
+    classpath_entries = await concurrently(
+        coursier_fetch_one_coord(entry) for entry in lockfile.entries
     )
 
     artifact_namespaces: dict[str, tuple[str, tuple[str, ...]]] = {}
@@ -108,7 +110,7 @@ async def generate_metadata_for_resolve(
     # Analyze each JAR
     for entry, classpath_entry in zip(lockfile.entries, classpath_entries):
         # Materialize the JAR to analyze it
-        jar_contents = await Get(DigestContents, Digest, classpath_entry.digest)
+        jar_contents = await get_digest_contents(classpath_entry.digest)
         if not jar_contents:
             continue
 
@@ -162,7 +164,7 @@ async def generate_metadata_for_resolve(
     metadata_json = json.dumps(metadata, indent=2, sort_keys=True)
     metadata_content = FileContent(metadata_path, metadata_json.encode("utf-8"))
 
-    metadata_digest = await Get(Digest, CreateDigest([metadata_content]))
+    metadata_digest = await create_digest(CreateDigest([metadata_content]))
 
     return GeneratedClojureLockfileMetadata(
         resolve_name=request.resolve_name,
@@ -181,6 +183,12 @@ async def generate_clojure_lockfile_metadata(
 ) -> GenerateClojureLockfileMetadata:
     """Generate Clojure namespace metadata for all JVM resolves."""
 
+    console.print_stderr(
+        "WARNING: generate-clojure-lockfile-metadata is deprecated. "
+        "Clojure namespace inference now analyzes JARs automatically. "
+        "This goal will be removed in a future version."
+    )
+
     console.print_stdout("Generating Clojure namespace metadata from JVM lockfiles...")
 
     # Get all JVM resolves
@@ -198,7 +206,7 @@ async def generate_clojure_lockfile_metadata(
 
         # Get the lockfile digest
         try:
-            lockfile_digest = await Get(Digest, PathGlobs([lockfile_path]))
+            lockfile_digest = await path_globs_to_digest(PathGlobs([lockfile_path]))
             requests.append(
                 GenerateClojureLockfileMetadataRequest(
                     resolve_name=resolve_name,
@@ -217,8 +225,8 @@ async def generate_clojure_lockfile_metadata(
         return GenerateClojureLockfileMetadata(exit_code=0)
 
     # Generate metadata for all resolves in parallel
-    results = await MultiGet(
-        Get(GeneratedClojureLockfileMetadata, GenerateClojureLockfileMetadataRequest, req)
+    results = await concurrently(
+        generate_metadata_for_resolve(req, **implicitly())
         for req in requests
     )
 

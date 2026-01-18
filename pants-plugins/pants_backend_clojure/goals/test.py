@@ -20,23 +20,23 @@ from pants.core.goals.test import (
     TestResult,
     TestSubsystem,
 )
-from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
+from pants.core.util_rules.env_vars import environment_vars_subset
+from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
 from pants.engine.addresses import Addresses
-from pants.engine.env_vars import EnvironmentVars, EnvironmentVarsRequest
-from pants.engine.fs import Digest, DigestContents, MergeDigests, PathGlobs
-from pants.engine.internals.selectors import Get, MultiGet
+from pants.engine.env_vars import EnvironmentVarsRequest
+from pants.engine.fs import MergeDigests
+from pants.engine.internals.graph import transitive_targets
+from pants.engine.intrinsics import execute_process_with_retry, get_digest_contents, merge_digests
 from pants.engine.process import (
     InteractiveProcess,
-    Process,
     ProcessCacheScope,
-    ProcessResultWithRetries,
     ProcessWithRetries,
 )
-from pants.engine.rules import collect_rules, implicitly, rule
-from pants.engine.target import FieldSet, SourcesField, TransitiveTargets, TransitiveTargetsRequest
+from pants.engine.rules import collect_rules, concurrently, implicitly, rule
+from pants.engine.target import SourcesField, TransitiveTargetsRequest
 from pants.engine.unions import UnionRule
 from pants.jvm.classpath import classpath as classpath_get
-from pants.jvm.jdk_rules import JdkEnvironment, JdkRequest, JvmProcess
+from pants.jvm.jdk_rules import JdkRequest, JvmProcess, jvm_process, prepare_jdk_environment
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmDependenciesField, JvmJdkField
 from pants.util.logging import LogLevel
@@ -81,22 +81,22 @@ async def setup_clojure_test_for_target(
     # Prepare JDK and get transitive targets
     jdk_request = JdkRequest.from_field(request.field_set.jdk_version)
     transitive_targets_request = TransitiveTargetsRequest([request.field_set.address])
+    addresses = Addresses([request.field_set.address])
 
-    jdk, transitive_targets, classpath = await MultiGet(
-        Get(JdkEnvironment, JdkRequest, jdk_request),
-        Get(TransitiveTargets, TransitiveTargetsRequest, transitive_targets_request),
-        classpath_get(**implicitly(Addresses([request.field_set.address]))),
+    jdk, trans_targets, classpath = await concurrently(
+        prepare_jdk_environment(**implicitly({jdk_request: JdkRequest})),
+        transitive_targets(transitive_targets_request, **implicitly()),
+        classpath_get(**implicitly({addresses: Addresses})),
     )
 
     # Get test source file to parse namespace
-    test_source_files = await Get(
-        SourceFiles,
+    test_source_files = await determine_source_files(
         SourceFilesRequest([request.field_set.sources]),
     )
 
     # Extract test namespace from source file
     test_file_path = test_source_files.files[0]
-    digest_contents = await Get(DigestContents, Digest, test_source_files.snapshot.digest)
+    digest_contents = await get_digest_contents(test_source_files.snapshot.digest)
     content = digest_contents[0].content.decode("utf-8")
     match = re.search(r"\(ns\s+([a-z0-9\-_.]+)", content, re.MULTILINE)
     if not match:
@@ -115,24 +115,21 @@ async def setup_clojure_test_for_target(
     test_namespace = match.group(1)
 
     # Get all source files (both production and test code)
-    all_source_files = await Get(
-        SourceFiles,
+    all_source_files = await determine_source_files(
         SourceFilesRequest(
-            (tgt.get(SourcesField) for tgt in transitive_targets.closure),
+            (tgt.get(SourcesField) for tgt in trans_targets.closure),
             for_sources_types=(ClojureSourceField, ClojureTestSourceField),
             enable_codegen=False,
         ),
     )
 
     # Merge classpath JARs with all source files
-    input_digest = await Get(
-        Digest,
+    input_digest = await merge_digests(
         MergeDigests([*classpath.digests(), all_source_files.snapshot.digest]),
     )
 
     # Get environment variables
-    field_set_extra_env = await Get(
-        EnvironmentVars,
+    field_set_extra_env = await environment_vars_subset(
         EnvironmentVarsRequest(request.field_set.extra_env_vars.value or ()),
     )
 
@@ -193,15 +190,17 @@ async def run_clojure_test(
     field_set = batch.single_element
 
     # Setup test process
-    test_setup = await Get(TestSetup, TestSetupRequest, TestSetupRequest(field_set, is_debug=False))
+    test_setup = await setup_clojure_test_for_target(
+        TestSetupRequest(field_set, is_debug=False), **implicitly()
+    )
 
     # Convert JvmProcess to Process
-    process = await Get(Process, JvmProcess, test_setup.process)
+    jvm_proc = test_setup.process
+    process = await jvm_process(**implicitly({jvm_proc: JvmProcess}))
 
     # Execute with retry support
-    process_results = await Get(
-        ProcessResultWithRetries,
-        ProcessWithRetries(process, test_subsystem.attempts_default),
+    process_results = await execute_process_with_retry(
+        ProcessWithRetries(process, test_subsystem.attempts_default), **implicitly()
     )
 
     return TestResult.from_fallible_process_result(
@@ -215,12 +214,11 @@ async def run_clojure_test(
 async def setup_clojure_test_debug_request(
     batch: ClojureTestRequest.Batch[ClojureTestFieldSet, Any],
 ) -> TestDebugRequest:
-    setup = await Get(
-        TestSetup,
-        TestSetupRequest,
-        TestSetupRequest(batch.single_element, is_debug=True),
+    setup = await setup_clojure_test_for_target(
+        TestSetupRequest(batch.single_element, is_debug=True), **implicitly()
     )
-    process = await Get(Process, JvmProcess, setup.process)
+    jvm_proc = setup.process
+    process = await jvm_process(**implicitly({jvm_proc: JvmProcess}))
 
     return TestDebugRequest(
         InteractiveProcess.from_process(

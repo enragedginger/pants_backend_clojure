@@ -5,14 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pants.core.goals.fmt import FmtResult, FmtTargetsRequest, Partitions
-from pants.core.util_rules.config_files import ConfigFiles, ConfigFilesRequest
-from pants.core.util_rules.external_tool import DownloadedExternalTool, ExternalToolRequest
+from pants.core.util_rules.config_files import ConfigFiles, ConfigFilesRequest, find_config_file
+from pants.core.util_rules.external_tool import (
+    DownloadedExternalTool,
+    ExternalToolRequest,
+    download_external_tool,
+)
 from pants.core.util_rules.partitions import PartitionerType
 from pants.engine.fs import Digest, MergeDigests
-from pants.engine.internals.selectors import concurrently
+from pants.engine.intrinsics import execute_process, merge_digests
 from pants.engine.platform import Platform
-from pants.engine.process import Process, ProcessResult
-from pants.engine.rules import collect_rules, Get, rule
+from pants.engine.process import FallibleProcessResult, Process
+from pants.engine.rules import collect_rules, implicitly, rule
 from pants.util.logging import LogLevel
 from pants.util.strutil import pluralize
 
@@ -38,13 +42,10 @@ async def cljfmt_fmt(
     and runs `cljfmt fix` on the source files.
     """
     # Download cljfmt binary
-    downloaded_cljfmt = await Get(
-        DownloadedExternalTool, ExternalToolRequest, cljfmt.get_request(platform)
-    )
+    downloaded_cljfmt = await download_external_tool(cljfmt.get_request(platform))
 
     # Find config files if discovery is enabled
-    config_files = await Get(
-        ConfigFiles,
+    config_files = await find_config_file(
         ConfigFilesRequest(
             discovery=cljfmt.config_discovery,
             check_existence=[".cljfmt.edn", ".cljfmt.clj", "cljfmt.edn", "cljfmt.clj"],
@@ -52,8 +53,7 @@ async def cljfmt_fmt(
     )
 
     # Merge all input files: source files + cljfmt binary + config files
-    input_digest = await Get(
-        Digest,
+    input_digest = await merge_digests(
         MergeDigests(
             [
                 request.snapshot.digest,
@@ -73,8 +73,7 @@ async def cljfmt_fmt(
     ]
 
     # Execute cljfmt
-    result = await Get(
-        ProcessResult,
+    result = await execute_process(
         Process(
             argv=argv,
             input_digest=input_digest,
@@ -82,6 +81,7 @@ async def cljfmt_fmt(
             description=f"Run cljfmt on {pluralize(len(request.snapshot.files), 'file')}.",
             level=LogLevel.DEBUG,
         ),
+        **implicitly(),
     )
 
     return await FmtResult.create(request, result)

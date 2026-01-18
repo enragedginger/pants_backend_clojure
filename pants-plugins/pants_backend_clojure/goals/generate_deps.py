@@ -3,29 +3,26 @@ from __future__ import annotations
 import tomllib
 from dataclasses import dataclass
 
-from pants.core.util_rules.source_files import SourceFiles, SourceFilesRequest
+from pants.core.util_rules.source_files import SourceFilesRequest, determine_source_files
 from pants.engine.console import Console
 from pants.engine.fs import (
     CreateDigest,
-    Digest,
-    DigestContents,  # Still needed for reading lock file
     FileContent,
     PathGlobs,
     Workspace,
 )
 from pants.engine.goal import Goal, GoalSubsystem
-from pants.engine.internals.selectors import Get, MultiGet
-from pants.engine.rules import collect_rules, goal_rule
+from pants.engine.intrinsics import create_digest, get_digest_contents, path_globs_to_digest
+from pants.engine.rules import collect_rules, concurrently, implicitly, goal_rule
 from pants.engine.target import AllTargets
 from pants.jvm.resolve.coursier_setup import CoursierSubsystem
 from pants.jvm.subsystems import JvmSubsystem
 from pants.jvm.target_types import JvmResolveField
 from pants.option.option_types import StrOption
-from pants.util.logging import LogLevel
 
 from pants_backend_clojure.namespace_analysis import (
-    ClojureNamespaceAnalysis,
     ClojureNamespaceAnalysisRequest,
+    analyze_clojure_namespaces,
 )
 from pants_backend_clojure.target_types import (
     ClojureSourceField,
@@ -271,24 +268,24 @@ async def gather_clojure_sources_for_resolve(
             test_targets.append(target)
 
     # Fetch source files for all targets in parallel
-    source_files_requests = []
-    for target in source_targets:
-        source_files_requests.append(
-            Get(SourceFiles, SourceFilesRequest([target[ClojureSourceField]]))
-        )
-    for target in test_targets:
-        source_files_requests.append(
-            Get(SourceFiles, SourceFilesRequest([target[ClojureTestSourceField]]))
-        )
-
-    all_source_files = await MultiGet(source_files_requests)
+    all_source_files = await concurrently(
+        *(
+            determine_source_files(SourceFilesRequest([target[ClojureSourceField]]))
+            for target in source_targets
+        ),
+        *(
+            determine_source_files(SourceFilesRequest([target[ClojureTestSourceField]]))
+            for target in test_targets
+        ),
+    )
 
     # Use clj-kondo analysis to extract namespaces
-    analysis_requests = [
-        Get(ClojureNamespaceAnalysis, ClojureNamespaceAnalysisRequest(sf.snapshot))
+    all_analyses = await concurrently(
+        analyze_clojure_namespaces(
+            ClojureNamespaceAnalysisRequest(sf.snapshot), **implicitly()
+        )
         for sf in all_source_files
-    ]
-    all_analyses = await MultiGet(analysis_requests)
+    )
 
     # Determine source roots
     source_roots = set()
@@ -437,8 +434,8 @@ async def generate_deps_edn_goal(
 
     try:
         # Read lock file using PathGlobs
-        lock_digest = await Get(Digest, PathGlobs([lock_file_path]))
-        lock_contents = await Get(DigestContents, Digest, lock_digest)
+        lock_digest = await path_globs_to_digest(PathGlobs([lock_file_path]))
+        lock_contents = await get_digest_contents(lock_digest)
 
         if not lock_contents:
             console.print_stderr(f"Error: Could not read lock file: {lock_file_path}")
@@ -474,7 +471,7 @@ async def generate_deps_edn_goal(
 
     # Create digest with the file content
     file_content = FileContent(output_path, deps_edn_content.encode("utf-8"))
-    output_digest = await Get(Digest, CreateDigest([file_content]))
+    output_digest = await create_digest(CreateDigest([file_content]))
 
     # Write to workspace
     workspace.write_digest(output_digest)
