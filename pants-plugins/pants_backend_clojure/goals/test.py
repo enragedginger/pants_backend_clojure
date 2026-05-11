@@ -34,6 +34,7 @@ from pants.option.option_types import ArgsListOption, SkipOption, StrOption
 from pants.option.subsystem import Subsystem
 from pants.util.logging import LogLevel
 from pants.util.strutil import softwrap
+
 from pants_backend_clojure.target_types import (
     ClojureSourceField,
     ClojureTestFieldSet,
