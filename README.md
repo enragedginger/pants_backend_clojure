@@ -173,6 +173,41 @@ clojure_tests(
 )
 ```
 
+#### Concurrency slots for parallel tests
+
+When tests grab shared host resources (TCP ports, on-disk paths, database
+names, …) parallel runs collide. Mirroring pytest's
+`[pytest].execution_slot_var`, the Clojure test runner can hand each
+concurrent test process a unique integer slot id:
+
+```toml
+# pants.toml
+[clojure-test-runner]
+execution_slot_var = "PANTS_EXECUTION_SLOT"
+```
+
+Each running test JVM then sees a `PANTS_EXECUTION_SLOT` env var with an
+integer in `[0, parallelism)`. Use it to derive non-overlapping resource
+ranges, e.g. a private port window per worker:
+
+```clojure
+(let [slot  (Long/parseLong
+              (or (System/getenv "PANTS_EXECUTION_SLOT")
+                  (throw (ex-info "PANTS_EXECUTION_SLOT not set — configure [clojure-test-runner].execution_slot_var" {}))))
+      base  30000
+      size  200
+      port-start (+ base (* slot size))
+      port-end   (+ port-start size -1)]
+  ;; bind your test fixtures to ports in [port-start, port-end]
+  ...)
+```
+
+Failing loudly when the env var is unset is intentional — silently
+defaulting to slot 0 would collapse every worker onto the same resource
+window, defeating the point of the feature.
+
+Slot count is governed by `[GLOBAL].process_execution_local_parallelism`.
+
 ### `clojure_deploy_jar`
 
 An executable uberjar with AOT compilation.

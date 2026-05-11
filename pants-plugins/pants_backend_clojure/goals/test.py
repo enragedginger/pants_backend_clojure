@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from pants.core.goals.test import (
@@ -21,6 +21,7 @@ from pants.engine.internals.graph import transitive_targets
 from pants.engine.intrinsics import execute_process_with_retry, get_digest_contents, merge_digests
 from pants.engine.process import (
     InteractiveProcess,
+    Process,
     ProcessCacheScope,
     ProcessWithRetries,
 )
@@ -29,10 +30,10 @@ from pants.engine.target import SourcesField, TransitiveTargetsRequest
 from pants.jvm.classpath import classpath as classpath_get
 from pants.jvm.jdk_rules import JdkRequest, JvmProcess, jvm_process, prepare_jdk_environment
 from pants.jvm.subsystems import JvmSubsystem
-from pants.option.option_types import ArgsListOption, SkipOption
+from pants.option.option_types import ArgsListOption, SkipOption, StrOption
 from pants.option.subsystem import Subsystem
 from pants.util.logging import LogLevel
-
+from pants.util.strutil import softwrap
 from pants_backend_clojure.target_types import (
     ClojureSourceField,
     ClojureTestFieldSet,
@@ -61,9 +62,37 @@ class ClojureTestSubsystem(Subsystem):
     skip = SkipOption("test")
     args = ArgsListOption(example="-Djdk.attach.allowAttachSelf")
 
+    execution_slot_var = StrOption(
+        default=None,
+        advanced=True,
+        help=softwrap(
+            """
+            If set, each test process is given an integer "slot" id — unique
+            among concurrently-running test processes — and that id is exposed
+            to the test JVM as an environment variable with this name.
+
+            Use this to partition shared resources across parallel test
+            workers — e.g. give each worker a non-overlapping TCP port window
+            (`start = base + slot * size`), a private temp directory, or a
+            distinct database name — so parallel runs don't collide.
+
+            Slot ids range from 0 to N-1, where N is Pants' local process
+            parallelism (`[GLOBAL].process_execution_local_parallelism`).
+            """
+        ),
+    )
+
 
 # ClojureTestFieldSet is now defined in target_types.py to avoid circular dependencies
 # and allow both the test runner and compiler to use the same field set definition
+
+
+def _forward_slot_var(process: Process, slot_var: str | None) -> Process:
+    # TODO: remove once JvmProcess forwards execution_slot_variable to the
+    # underlying Process (upstream pantsbuild/pants).
+    if not slot_var:
+        return process
+    return replace(process, execution_slot_variable=slot_var)
 
 
 class ClojureTestRequest(TestRequest):
@@ -207,6 +236,7 @@ async def setup_clojure_test_for_target(
 @rule(desc="Run Clojure tests", level=LogLevel.DEBUG)
 async def run_clojure_test(
     test_subsystem: TestSubsystem,
+    clojure_test: ClojureTestSubsystem,
     batch: ClojureTestRequest.Batch[ClojureTestFieldSet, Any],
 ) -> TestResult:
     field_set = batch.single_element
@@ -217,6 +247,7 @@ async def run_clojure_test(
     # Convert JvmProcess to Process
     jvm_proc = test_setup.process
     process = await jvm_process(**implicitly({jvm_proc: JvmProcess}))
+    process = _forward_slot_var(process, clojure_test.execution_slot_var)
 
     # Execute with retry support
     process_results = await execute_process_with_retry(ProcessWithRetries(process, test_subsystem.attempts_default), **implicitly())
@@ -230,11 +261,13 @@ async def run_clojure_test(
 
 @rule(level=LogLevel.DEBUG)
 async def setup_clojure_test_debug_request(
+    clojure_test: ClojureTestSubsystem,
     batch: ClojureTestRequest.Batch[ClojureTestFieldSet, Any],
 ) -> TestDebugRequest:
     setup = await setup_clojure_test_for_target(TestSetupRequest(batch.single_element, is_debug=True), **implicitly())
     jvm_proc = setup.process
     process = await jvm_process(**implicitly({jvm_proc: JvmProcess}))
+    process = _forward_slot_var(process, clojure_test.execution_slot_var)
 
     return TestDebugRequest(
         InteractiveProcess.from_process(
