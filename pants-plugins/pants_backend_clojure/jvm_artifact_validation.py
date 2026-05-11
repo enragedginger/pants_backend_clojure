@@ -21,9 +21,7 @@ from pants.jvm.target_types import JvmArtifactJarSourceField
 
 async def validate_local_jar_paths(targets: AllJvmArtifactTargets) -> None:
     jar_paths = [
-        os.path.join(tgt.address.spec_path, jar_value)
-        for tgt in targets
-        if (jar_value := tgt.get(JvmArtifactJarSourceField).value)
+        os.path.join(tgt.address.spec_path, jar_value) for tgt in targets if (jar_value := tgt.get(JvmArtifactJarSourceField).value)
     ]
     if not jar_paths:
         return
