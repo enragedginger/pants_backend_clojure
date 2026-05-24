@@ -262,13 +262,14 @@ async def run_clojure_test(
 
 @rule(level=LogLevel.DEBUG)
 async def setup_clojure_test_debug_request(
-    clojure_test: ClojureTestSubsystem,
     batch: ClojureTestRequest.Batch[ClojureTestFieldSet, Any],
 ) -> TestDebugRequest:
     setup = await setup_clojure_test_for_target(TestSetupRequest(batch.single_element, is_debug=True), **implicitly())
     jvm_proc = setup.process
     process = await jvm_process(**implicitly({jvm_proc: JvmProcess}))
-    process = _forward_slot_var(process, clojure_test.execution_slot_var)
+    # No execution-slot var for --debug: it runs a single test process in the foreground (Pants does
+    # not parallelize debug runs), and InteractiveProcess.from_process would drop
+    # Process.execution_slot_variable anyway.
 
     return TestDebugRequest(
         InteractiveProcess.from_process(
