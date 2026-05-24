@@ -1665,3 +1665,79 @@ def test_test_with_extra_jvm_options(rule_runner: RuleRunner) -> None:
     )
 
     assert result.exit_code == 0
+
+
+def test_test_execution_slot_var(rule_runner: RuleRunner) -> None:
+    """Test that --clojure-test-runner-execution-slot-var exposes a slot id env var.
+
+    Only checks that the option forwards a slot id to the child JVM. Uniqueness
+    across concurrent processes is guaranteed by Pants core and not exercised here.
+    """
+    rule_runner.write_files(
+        {
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "3rdparty/jvm/default.lock": CLOJURE_LOCKFILE,
+            "BUILD": dedent(
+                """\
+                clojure_tests(
+                    name='tests',
+                    dependencies=['3rdparty/jvm:org.clojure_clojure'],
+                )
+                """
+            ),
+            "slot_test.clj": dedent(
+                """\
+                (ns slot-test
+                  (:require [clojure.test :refer [deftest is]]))
+
+                (deftest slot-env-var-is-set
+                  (let [slot (System/getenv "PANTS_EXECUTION_SLOT")]
+                    (is (some? slot)
+                        "PANTS_EXECUTION_SLOT should be set when execution_slot_var is configured")
+                    (is (re-matches #"\\d+" (or slot ""))
+                        "PANTS_EXECUTION_SLOT should be a non-negative integer")))
+                """
+            ),
+        }
+    )
+
+    result = run_clojure_test(
+        rule_runner,
+        "tests",
+        "slot_test.clj",
+        extra_args=["--clojure-test-runner-execution-slot-var=PANTS_EXECUTION_SLOT"],
+    )
+
+    assert result.exit_code == 0
+
+
+def test_test_execution_slot_var_unset_by_default(rule_runner: RuleRunner) -> None:
+    """When execution_slot_var is not set, the env var must not be present."""
+    rule_runner.write_files(
+        {
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD,
+            "3rdparty/jvm/default.lock": CLOJURE_LOCKFILE,
+            "BUILD": dedent(
+                """\
+                clojure_tests(
+                    name='tests',
+                    dependencies=['3rdparty/jvm:org.clojure_clojure'],
+                )
+                """
+            ),
+            "no_slot_test.clj": dedent(
+                """\
+                (ns no-slot-test
+                  (:require [clojure.test :refer [deftest is]]))
+
+                (deftest slot-env-var-is-not-set
+                  (is (nil? (System/getenv "PANTS_EXECUTION_SLOT"))
+                      "PANTS_EXECUTION_SLOT should not leak in when not configured"))
+                """
+            ),
+        }
+    )
+
+    result = run_clojure_test(rule_runner, "tests", "no_slot_test.clj")
+
+    assert result.exit_code == 0
