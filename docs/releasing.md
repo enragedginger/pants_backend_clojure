@@ -6,7 +6,10 @@ Releases are managed via GitHub Actions workflows:
 
 1. **Create a draft release** via the `Create draft release` workflow
 2. **Review and finalize** the draft release on GitHub
-3. **Publish to PyPI** via the `Publish` workflow (Phase 4)
+3. **Publish to PyPI** via the `Publish to PyPI` workflow
+
+Both workflows key off a git tag named `releases/vX.Y.Z`, so that tag must
+exist on the remote *before* you run either one.
 
 ## Step-by-step
 
@@ -18,13 +21,19 @@ Update `PLUGIN_VERSION` in `pants-plugins/BUILD`:
 PLUGIN_VERSION = "0.2.0"
 ```
 
-Commit and push to `main` (or your release branch). Ensure CI passes.
+(The `/update-release-version` skill does this and updates the README
+references for you.) Also update `CHANGELOG.md`. Commit and push to `main`,
+and ensure CI passes.
 
 ### 2. Create a git tag
 
+Tags use the `releases/vX.Y.Z` naming convention — **not** a bare `vX.Y.Z`.
+Both workflows check out and download by this exact tag, so getting the name
+right matters:
+
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag releases/v0.2.0
+git push origin releases/v0.2.0
 ```
 
 ### 3. Trigger the draft release workflow
@@ -32,9 +41,19 @@ git push origin v0.2.0
 1. Go to **Actions** > **Create draft release** in the GitHub repo
 2. Click **Run workflow**
 3. Fill in:
-   - **ref**: the tag name (e.g., `v0.2.0`)
-   - **version**: the version string without the `v` prefix (e.g., `0.2.0`)
+   - **ref**: the tag name (e.g., `releases/v0.2.0`)
+   - **version**: the version string without any prefix (e.g., `0.2.0`).
+     This must exactly match `PLUGIN_VERSION`, or the package step fails
+     when it can't find `dist/pants_backend_clojure-<version>-...`.
 4. Click **Run workflow**
+
+Or from the CLI:
+
+```bash
+gh workflow run create-draft-release.yaml \
+  -f ref=releases/v0.2.0 \
+  -f version=0.2.0
+```
 
 The workflow will:
 - Run the full test suite
@@ -52,8 +71,27 @@ The workflow will:
 
 ### 5. Publish to PyPI
 
-Once the release is finalized (no longer a draft), use the `Publish` workflow to push
-to TestPyPI and/or production PyPI. See Phase 4 documentation for details.
+Once the release is finalized (**no longer a draft** — the publish workflow's
+validation step fails fast if the release is still a draft), trigger the
+`Publish to PyPI` workflow. Run it **twice**: first `test-only` to sanity-check
+on TestPyPI, then `full` once that looks good.
+
+- **release_tag**: the tag name (e.g., `releases/v0.2.0`)
+- **publish_scope**:
+  - `test-only` — uploads to TestPyPI only
+  - `full` — uploads to TestPyPI **and** production PyPI (the PyPI job only
+    runs after the TestPyPI job succeeds)
+
+```bash
+# 1. Sanity-check on TestPyPI
+gh workflow run publish.yaml -f release_tag=releases/v0.2.0 -f publish_scope=test-only
+
+# 2. Then publish for real
+gh workflow run publish.yaml -f release_tag=releases/v0.2.0 -f publish_scope=full
+```
+
+Publishing uses trusted publishing via the `testpypi` / `pypi` GitHub
+environments, so there are no tokens to pass.
 
 ## Multi-Pants-version support
 
