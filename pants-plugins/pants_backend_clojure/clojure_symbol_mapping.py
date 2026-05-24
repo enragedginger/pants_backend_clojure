@@ -24,6 +24,7 @@ from pants.engine.addresses import Address, AddressInput
 from pants.engine.fs import Digest, FileContent, PathGlobs
 from pants.engine.intrinsics import get_digest_contents, path_globs_to_digest
 from pants.engine.rules import collect_rules, concurrently, implicitly, rule
+from pants.engine.target import Target
 from pants.jvm.dependency_inference.artifact_mapper import (
     DEFAULT_SYMBOL_NAMESPACE,
     AllJvmArtifactTargets,
@@ -251,10 +252,12 @@ async def build_third_party_clojure_namespace_mapping(
     # skipped during JAR analysis since the user has declared exactly what they own.
     coord_to_address: dict[tuple[str, str], Address] = {}
     coords_with_explicit_packages: set[tuple[str, str]] = set()
+    resolve_artifact_tgts: list[Target] = []
     for tgt in all_jvm_artifact_tgts:
         resolve = tgt[JvmResolveField].normalized_value(jvm)
         if resolve != request.resolve_name:
             continue
+        resolve_artifact_tgts.append(tgt)
         group = tgt[JvmArtifactGroupField].value
         artifact = tgt[JvmArtifactArtifactField].value
         coord_to_address[(group, artifact)] = tgt.address
@@ -262,8 +265,9 @@ async def build_third_party_clojure_namespace_mapping(
             coords_with_explicit_packages.add((group, artifact))
 
     # Surface missing local `jar=` files with a precise error before Coursier
-    # fails deep inside pants with a cryptic IndexError.
-    await validate_local_jar_paths(all_jvm_artifact_tgts)
+    # fails deep inside pants with a cryptic IndexError. Scoped to this resolve's
+    # artifacts since this rule runs once per resolve.
+    await validate_local_jar_paths(resolve_artifact_tgts)
 
     # Fetch all JARs using Coursier (uses cache)
     classpath_entries = await concurrently(coursier_fetch_one_coord(entry, **implicitly()) for entry in lockfile.entries)

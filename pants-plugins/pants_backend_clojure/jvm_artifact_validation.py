@@ -11,15 +11,16 @@ call site.
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 
 from pants.base.glob_match_error_behavior import GlobMatchErrorBehavior
 from pants.engine.fs import PathGlobs
 from pants.engine.intrinsics import path_globs_to_digest
-from pants.jvm.dependency_inference.artifact_mapper import AllJvmArtifactTargets
+from pants.engine.target import Target
 from pants.jvm.target_types import JvmArtifactJarSourceField
 
 
-async def validate_local_jar_paths(targets: AllJvmArtifactTargets) -> None:
+async def validate_local_jar_paths(targets: Iterable[Target]) -> None:
     jar_paths = [
         os.path.join(tgt.address.spec_path, jar_value) for tgt in targets if (jar_value := tgt.get(JvmArtifactJarSourceField).value)
     ]
@@ -30,6 +31,6 @@ async def validate_local_jar_paths(targets: AllJvmArtifactTargets) -> None:
         PathGlobs(
             jar_paths,
             glob_match_error_behavior=GlobMatchErrorBehavior.error,
-            description_of_origin="the `jar=` field of `jvm_artifact` targets",
+            description_of_origin="the `jar=` field of `jvm_artifact` targets (check the path is correct and the file exists)",
         ),
     )

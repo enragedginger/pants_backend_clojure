@@ -51,6 +51,7 @@ from pants_backend_clojure.target_types import (
     ClojureTestTarget,
 )
 from pants_backend_clojure.target_types import rules as target_types_rules
+from tests.clojure_test_fixtures import CLOJURE_3RDPARTY_BUILD, CLOJURE_LOCKFILE
 
 
 def maybe_skip_jdk_test(func):
@@ -107,6 +108,80 @@ def rule_runner() -> RuleRunner:
     )
     rule_runner.set_options(args=[], env_inherit=PYTHON_BOOTSTRAP_ENV)
     return rule_runner
+
+
+_JVM_RESOLVES = {
+    "jvm-default": "3rdparty/jvm/default.lock",
+}
+
+
+@maybe_skip_jdk_test
+def test_missing_local_jar_raises_clear_error(rule_runner: RuleRunner) -> None:
+    """A `jvm_artifact` with a missing local `jar=` file fails dependency inference
+    with a clear error naming the missing path, rather than a cryptic IndexError
+    from deep inside Coursier.
+
+    The broken artifact lives in `jvm-default`, which has a valid, non-empty
+    lockfile (CLOJURE_LOCKFILE), so `build_third_party_clojure_namespace_mapping`
+    reaches the validation call rather than short-circuiting on a missing/empty
+    lockfile. After scoping the validation to the resolve being built, it fires
+    for any artifact in that resolve; the `clojure_source` need not depend on the
+    broken artifact.
+    """
+    rule_runner.write_files(
+        {
+            "3rdparty/jvm/BUILD": CLOJURE_3RDPARTY_BUILD
+            + dedent(
+                """\
+                jvm_artifact(
+                    name="brokenjar",
+                    group="com.example",
+                    artifact="broken",
+                    version="1.0.0",
+                    jar="missing.jar",
+                    resolve="jvm-default",
+                )
+                """
+            ),
+            "3rdparty/jvm/default.lock": CLOJURE_LOCKFILE,
+            "BUILD": dedent(
+                """\
+                clojure_source(
+                    name='app',
+                    source='app.clj',
+                )
+                """
+            ),
+            "app.clj": "(ns app)\n",
+            # Note: 3rdparty/jvm/missing.jar is intentionally not created.
+        }
+    )
+
+    # Point the default resolve at the non-empty lockfile so the namespace-mapping
+    # build runs (the fixture default sets no resolves).
+    rule_runner.set_options(
+        [
+            f"--jvm-resolves={repr(_JVM_RESOLVES)}",
+            "--jvm-default-resolve=jvm-default",
+        ],
+        env_inherit=PYTHON_BOOTSTRAP_ENV,
+    )
+
+    from pants_backend_clojure.dependency_inference import ClojureSourceDependenciesInferenceFieldSet
+
+    app_target = rule_runner.get_target(Address("", target_name="app", relative_file_path="app.clj"))
+
+    with pytest.raises(Exception) as exc_info:
+        rule_runner.request(
+            InferredDependencies,
+            [InferClojureSourceDependencies(ClojureSourceDependenciesInferenceFieldSet.create(app_target))],
+        )
+
+    error_text = str(exc_info.value)
+    # Primary: the error names the offending local jar path.
+    assert "missing.jar" in error_text
+    # Secondary: it comes from the `jar=` validation, not an incidental failure.
+    assert "the `jar=` field of `jvm_artifact` targets" in error_text
 
 
 @maybe_skip_jdk_test
