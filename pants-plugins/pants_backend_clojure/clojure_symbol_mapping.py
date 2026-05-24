@@ -44,6 +44,7 @@ from pants.jvm.target_types import (
 from pants.util.frozendict import FrozenDict
 from pants.util.logging import LogLevel
 
+from pants_backend_clojure.jvm_artifact_validation import validate_local_jar_paths
 from pants_backend_clojure.utils.jar_analyzer import analyze_jar_for_namespaces
 
 logger = logging.getLogger(__name__)
@@ -259,6 +260,10 @@ async def build_third_party_clojure_namespace_mapping(
         coord_to_address[(group, artifact)] = tgt.address
         if tgt[JvmArtifactPackagesField].value:
             coords_with_explicit_packages.add((group, artifact))
+
+    # Surface missing local `jar=` files with a precise error before Coursier
+    # fails deep inside pants with a cryptic IndexError.
+    await validate_local_jar_paths(all_jvm_artifact_tgts)
 
     # Fetch all JARs using Coursier (uses cache)
     classpath_entries = await concurrently(coursier_fetch_one_coord(entry, **implicitly()) for entry in lockfile.entries)

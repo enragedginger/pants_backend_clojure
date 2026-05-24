@@ -12,6 +12,7 @@ from pants.core.goals.test import rules as test_goal_rules
 from pants.core.util_rules import config_files, external_tool, source_files, stripped_source_files, system_binaries
 from pants.engine.addresses import Address
 from pants.jvm import classpath, jvm_common, non_jvm_dependencies
+from pants.jvm.dependency_inference import artifact_mapper
 from pants.jvm.goals import lockfile
 from pants.jvm.resolve.coursier_fetch import rules as coursier_fetch_rules
 from pants.jvm.resolve.coursier_setup import rules as coursier_setup_rules
@@ -38,6 +39,7 @@ def rule_runner() -> RuleRunner:
     rule_runner = RuleRunner(
         preserve_tmpdirs=True,
         rules=[
+            *artifact_mapper.rules(),
             *classpath.rules(),
             *compile_clj.rules(),
             *config_files.rules(),

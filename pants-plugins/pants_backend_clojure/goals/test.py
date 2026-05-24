@@ -27,12 +27,14 @@ from pants.engine.process import (
 from pants.engine.rules import collect_rules, concurrently, implicitly, rule
 from pants.engine.target import SourcesField, TransitiveTargetsRequest
 from pants.jvm.classpath import classpath as classpath_get
+from pants.jvm.dependency_inference.artifact_mapper import AllJvmArtifactTargets
 from pants.jvm.jdk_rules import JdkRequest, JvmProcess, jvm_process, prepare_jdk_environment
 from pants.jvm.subsystems import JvmSubsystem
 from pants.option.option_types import ArgsListOption, SkipOption
 from pants.option.subsystem import Subsystem
 from pants.util.logging import LogLevel
 
+from pants_backend_clojure.jvm_artifact_validation import validate_local_jar_paths
 from pants_backend_clojure.target_types import (
     ClojureSourceField,
     ClojureTestFieldSet,
@@ -91,11 +93,16 @@ async def setup_clojure_test_for_target(
     test_subsystem: TestSubsystem,
     test_extra_env: TestExtraEnv,
     clojure_test: ClojureTestSubsystem,
+    all_jvm_artifact_tgts: AllJvmArtifactTargets,
 ) -> TestSetup:
     # Prepare JDK and get transitive targets
     jdk_request = JdkRequest.from_field(request.field_set.jdk_version)
     transitive_targets_request = TransitiveTargetsRequest([request.field_set.address])
     addresses = Addresses([request.field_set.address])
+
+    # Surface missing local `jar=` files before Coursier fails with a cryptic
+    # IndexError deep in pants/jvm/resolve/coursier_fetch.py.
+    await validate_local_jar_paths(all_jvm_artifact_tgts)
 
     jdk, trans_targets, classpath = await concurrently(
         prepare_jdk_environment(**implicitly({jdk_request: JdkRequest})),
