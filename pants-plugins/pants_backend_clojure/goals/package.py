@@ -6,6 +6,7 @@ import re
 import zipfile
 from dataclasses import dataclass
 
+from pants.core.environments.target_types import EnvironmentField
 from pants.core.goals.package import (
     BuiltPackage,
     BuiltPackageArtifact,
@@ -98,6 +99,11 @@ class ClojureDeployJarFieldSet(PackageFieldSet):
     jdk: JvmJdkField
     resolve: JvmResolveField
     output_path: OutputPathField
+    # Surfaced so Pants's `_compute_env_field` (pants.core.environments.rules), invoked by
+    # the `package` goal via EnvironmentNameRequest.from_field_set, picks up the target's
+    # `environment=` setting. Without this attribute, packaging silently falls back to
+    # `__local__` even when the target sets `environment="..."`.
+    environment: EnvironmentField
 
 
 @rule(desc="Package Clojure deploy jar", level=LogLevel.DEBUG)

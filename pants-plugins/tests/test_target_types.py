@@ -4,6 +4,8 @@ from textwrap import dedent
 
 import pytest
 from pants.build_graph.address import Address
+from pants.core.environments.rules import EnvironmentNameRequest
+from pants.core.environments.target_types import LOCAL_ENVIRONMENT_MATCHER
 from pants.engine.internals.graph import _TargetParametrizations, _TargetParametrizationsRequest
 from pants.engine.rules import QueryRule
 from pants.engine.target import Target
@@ -14,6 +16,7 @@ from pants.jvm.target_types import (
     JvmResolveField,
 )
 from pants.testutil.rule_runner import RuleRunner
+from pants_backend_clojure.goals.package import ClojureDeployJarFieldSet
 from pants_backend_clojure.target_types import (
     ClojureDeployJarTarget,
     ClojureMainNamespaceField,
@@ -21,6 +24,7 @@ from pants_backend_clojure.target_types import (
     ClojureSourcesGeneratorSourcesField,
     ClojureSourcesGeneratorTarget,
     ClojureSourceTarget,
+    ClojureTestFieldSet,
     ClojureTestsGeneratorSourcesField,
     ClojureTestsGeneratorTarget,
     ClojureTestSourceField,
@@ -492,3 +496,138 @@ def test_clojure_deploy_jar_with_jdk(rule_runner: RuleRunner) -> None:
 
     # Check JDK field
     assert target[JvmJdkField].value == "17"
+
+
+# -----------------------------------------------------------------------------------------------
+# EnvironmentField wiring tests
+# -----------------------------------------------------------------------------------------------
+
+
+def test_environment_field_present_on_all_targets() -> None:
+    """The `environment` field must be wired onto every Clojure target.
+
+    Concrete targets carry it in `core_fields`; the generator targets carry it as a
+    `moved_field` (so it ends up on the generated targets, not the generator itself).
+    """
+    for tgt_cls in (ClojureSourceTarget, ClojureTestTarget, ClojureDeployJarTarget):
+        assert "environment" in {f.alias for f in tgt_cls.core_fields}
+    for gen_cls in (ClojureSourcesGeneratorTarget, ClojureTestsGeneratorTarget):
+        assert "environment" in {f.alias for f in gen_cls.moved_fields}
+
+
+def test_clojure_test_field_set_surfaces_environment(rule_runner: RuleRunner) -> None:
+    """`ClojureTestFieldSet` must surface `environment` so `pants test` honors `environment=`.
+
+    Pants resolves the environment for the `test` goal via
+    `EnvironmentNameRequest.from_field_set` → `_compute_env_field`, which scans the field set's
+    attributes for an `EnvironmentField`. Without the attribute the value falls back to `__local__`.
+    """
+    rule_runner.write_files(
+        {
+            "test/clj/BUILD": dedent(
+                """\
+                clojure_test(name="t", source="example_test.clj", environment="some_env")
+                """
+            ),
+            "test/clj/example_test.clj": "(ns example.core-test)",
+        }
+    )
+    rule_runner.set_options(
+        [
+            f"--jvm-resolves={repr(_JVM_RESOLVES)}",
+            "--jvm-default-resolve=jvm-default",
+        ]
+    )
+
+    target = rule_runner.get_target(Address("test/clj", target_name="t"))
+    field_set = ClojureTestFieldSet.create(target)
+    assert EnvironmentNameRequest.from_field_set(field_set).raw_value == "some_env"
+
+
+def test_clojure_test_field_set_defaults_to_local(rule_runner: RuleRunner) -> None:
+    """When no `environment=` is set, the test field set resolves to the local matcher."""
+    rule_runner.write_files(
+        {
+            "test/clj/BUILD": dedent(
+                """\
+                clojure_test(name="t", source="example_test.clj")
+                """
+            ),
+            "test/clj/example_test.clj": "(ns example.core-test)",
+        }
+    )
+    rule_runner.set_options(
+        [
+            f"--jvm-resolves={repr(_JVM_RESOLVES)}",
+            "--jvm-default-resolve=jvm-default",
+        ]
+    )
+
+    target = rule_runner.get_target(Address("test/clj", target_name="t"))
+    field_set = ClojureTestFieldSet.create(target)
+    assert EnvironmentNameRequest.from_field_set(field_set).raw_value == LOCAL_ENVIRONMENT_MATCHER
+
+
+def test_clojure_deploy_jar_field_set_surfaces_environment(rule_runner: RuleRunner) -> None:
+    """`ClojureDeployJarFieldSet` must surface `environment` so `pants package` honors `environment=`.
+
+    This is the regression guard for the deploy-jar fix: before the field was surfaced on the field
+    set, `package` always resolved to `__local__` regardless of the target's `environment=` setting.
+    """
+    rule_runner.write_files(
+        {
+            "src/BUILD": dedent(
+                """\
+                clojure_source(name="core", source="core.clj")
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="my.app.core",
+                    dependencies=[":core"],
+                    environment="some_env",
+                )
+                """
+            ),
+            "src/core.clj": "(ns my.app.core (:gen-class))",
+        }
+    )
+    rule_runner.set_options(
+        [
+            f"--jvm-resolves={repr(_JVM_RESOLVES)}",
+            "--jvm-default-resolve=jvm-default",
+        ]
+    )
+
+    target = rule_runner.get_target(Address("src", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+    assert EnvironmentNameRequest.from_field_set(field_set).raw_value == "some_env"
+
+
+def test_clojure_deploy_jar_field_set_defaults_to_local(rule_runner: RuleRunner) -> None:
+    """When no `environment=` is set, the deploy-jar field set resolves to the local matcher."""
+    rule_runner.write_files(
+        {
+            "src/BUILD": dedent(
+                """\
+                clojure_source(name="core", source="core.clj")
+
+                clojure_deploy_jar(
+                    name="app",
+                    main="my.app.core",
+                    dependencies=[":core"],
+                )
+                """
+            ),
+            "src/core.clj": "(ns my.app.core (:gen-class))",
+        }
+    )
+    rule_runner.set_options(
+        [
+            f"--jvm-resolves={repr(_JVM_RESOLVES)}",
+            "--jvm-default-resolve=jvm-default",
+        ]
+    )
+
+    target = rule_runner.get_target(Address("src", target_name="app"))
+    field_set = ClojureDeployJarFieldSet.create(target)
+    assert EnvironmentNameRequest.from_field_set(field_set).raw_value == LOCAL_ENVIRONMENT_MATCHER
