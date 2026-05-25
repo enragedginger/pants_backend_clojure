@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pants.core.environments.target_types import EnvironmentField
 from pants.core.goals.test import (
     TestExtraEnvVarsField,
     TestFieldSet,
@@ -94,6 +95,7 @@ class ClojureSourceTarget(Target):
     alias = "clojure_source"
     core_fields = (
         *COMMON_TARGET_FIELDS,
+        EnvironmentField,
         JvmDependenciesField,
         ClojureSourceField,
         JvmResolveField,
@@ -128,6 +130,7 @@ class ClojureSourcesGeneratorTarget(TargetFilesGenerator):
     generated_target_cls = ClojureSourceTarget
     copied_fields = COMMON_TARGET_FIELDS
     moved_fields = (
+        EnvironmentField,
         JvmDependenciesField,
         JvmResolveField,
         JvmJdkField,
@@ -158,6 +161,7 @@ class ClojureTestTarget(Target):
     alias = "clojure_test"
     core_fields = (
         *COMMON_TARGET_FIELDS,
+        EnvironmentField,
         ClojureTestSourceField,
         ClojureTestTimeoutField,
         ClojureTestExtraEnvVarsField,
@@ -188,6 +192,13 @@ class ClojureTestFieldSet(TestFieldSet):
     jdk_version: JvmJdkField
     dependencies: JvmDependenciesField
     extra_env_vars: ClojureTestExtraEnvVarsField
+    # Pants's `_compute_env_field` (pants.core.environments.rules)
+    # iterates the FieldSet's *attributes* looking for an
+    # EnvironmentField — adding it to the Target's core_fields only
+    # isn't enough; the FieldSet must surface it too, or the
+    # environment defaults to `__local__` even when the target sets
+    # `environment="buildbuddy_arm64"`.
+    environment: EnvironmentField
 
 
 @dataclass(frozen=True)
@@ -206,6 +217,7 @@ class ClojureTestsGeneratorTarget(TargetFilesGenerator):
     generated_target_cls = ClojureTestTarget
     copied_fields = COMMON_TARGET_FIELDS
     moved_fields = (
+        EnvironmentField,
         ClojureTestTimeoutField,
         ClojureTestExtraEnvVarsField,
         JvmDependenciesField,
@@ -274,6 +286,7 @@ class ClojureDeployJarTarget(Target):
     alias = "clojure_deploy_jar"
     core_fields = (
         *COMMON_TARGET_FIELDS,
+        EnvironmentField,
         JvmDependenciesField,
         ClojureMainNamespaceField,
         ClojureProvidedDependenciesField,
