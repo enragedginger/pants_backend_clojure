@@ -134,15 +134,31 @@ async def clj_kondo_lint(
         ),
     )
 
-    # Step 2b: Capture .clj-kondo/hooks/ directory for custom hook files.
-    # ConfigFilesRequest only captures individual files, not directories,
-    # so we need a separate PathGlobs to include hook files in the sandbox.
-    hooks_digest = await path_globs_to_digest(
-        PathGlobs(
-            [".clj-kondo/hooks/**"],
-            glob_match_error_behavior=GlobMatchErrorBehavior.ignore,
-        ),
-    )
+    # Step 2b: Capture the rest of the .clj-kondo/ config tree.
+    #
+    # ConfigFilesRequest (Step 2) only captures the root .clj-kondo/config.edn.
+    # clj-kondo also reads, relative to .clj-kondo/:
+    #   - custom hook code under hooks/, and
+    #   - imported library configs under <group-id>/<artifact-id>/ (the standard
+    #     `clj-kondo --copy-configs --dependencies` layout), each of which can
+    #     carry its own config.edn plus hook namespaces.
+    # ConfigFilesRequest captures individual files, not directories, so capture
+    # the whole tree here so imported configs and hooks resolve in the sandbox
+    # exactly as they do for an editor or a bare `clj-kondo` invocation. The
+    # runtime cache (.clj-kondo/.cache) is excluded: it is large, changes every
+    # run (which would bust this action's cache), and is supplied separately as
+    # an append-only cache below.
+    #
+    # NOTE: like Step 2, this only sees anything if the workspace un-ignores the
+    # dotdir, e.g. `[GLOBAL].pants_ignore.add = ["!/.clj-kondo/"]`.
+    clj_kondo_tree_digest = EMPTY_DIGEST
+    if clj_kondo.config_discovery:
+        clj_kondo_tree_digest = await path_globs_to_digest(
+            PathGlobs(
+                [".clj-kondo/**", "!.clj-kondo/.cache/**"],
+                glob_match_error_behavior=GlobMatchErrorBehavior.ignore,
+            ),
+        )
 
     # Step 3: Get source files
     source_files = await determine_source_files(
@@ -163,7 +179,7 @@ async def clj_kondo_lint(
                 source_files.snapshot.digest,
                 downloaded_clj_kondo.digest,
                 config_files.snapshot.digest,
-                hooks_digest,
+                clj_kondo_tree_digest,
                 *classpath_digests,
             ]
         ),
