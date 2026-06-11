@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from dataclasses import dataclass
 
 from pants.core.util_rules.config_files import ConfigFilesRequest, find_config_file
@@ -101,11 +102,20 @@ async def analyze_clojure_namespaces(
         ),
     )
 
-    # Run clj-kondo analysis in batch mode on all files
+    # Run clj-kondo analysis in batch mode on all files.
+    #
+    # Reference the downloaded binary by its sandbox-relative path ("./clj-kondo")
+    # rather than the bare name ("clj-kondo"). The bare name forces a $PATH lookup,
+    # which finds nothing under local execution (the hermetic sandbox has no PATH)
+    # and makes clj-kondo fail to start — producing empty stdout, an empty
+    # namespace map, and (for deploy-jar packaging) a spurious "could not find
+    # source file for main namespace" error. The "./" form execs the binary that
+    # download_external_tool placed at the sandbox root, and works under both
+    # local and remote execution.
     result = await execute_process(
         Process(
             argv=[
-                downloaded.exe,
+                os.path.join(".", downloaded.exe),
                 "--lint",
                 *request.snapshot.files,
                 "--config",
