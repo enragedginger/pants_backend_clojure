@@ -85,6 +85,22 @@ def _prepare_repl_for_workspace(argv: Iterable[str], env: dict[str, str], jdk: J
     return prefixed_argv, prefixed_env
 
 
+def _build_nrepl_start_code(host: str, port: int) -> str:
+    """Build the Clojure form that starts the nREPL server and blocks forever.
+
+    The startup message reads the bound port from the server's :port slot rather
+    than echoing the configured value: when the configured port is 0 the OS picks
+    an ephemeral port, and only the server map knows which one it got.
+    """
+    return (
+        f"(require (quote nrepl.server)) "
+        f'(let [server (nrepl.server/start-server :bind "{host}" :port {port})] '
+        f"(println server) "
+        f'(println (str "nREPL server started on port " (:port server))) '
+        f"@(promise))"  # Block forever
+    )
+
+
 class ClojureReplSubsystem(Subsystem):
     """Configuration for Clojure REPL behavior."""
 
@@ -122,7 +138,7 @@ class NReplSubsystem(Subsystem):
 
     port = IntOption(
         default=7888,
-        help="Port for nREPL server to bind to.",
+        help=("Port for nREPL server to bind to. Use 0 to let the OS pick a free ephemeral port; the chosen port is printed on startup."),
     )
 
     host = StrOption(
@@ -419,15 +435,7 @@ async def create_nrepl_request(
         *nrepl_classpath.classpath_entries(),
     ]
 
-    # Command to start nREPL server and keep it running
-    # The server is stored in an atom and we use deref (@) to block indefinitely
-    nrepl_start_code = (
-        f"(require (quote nrepl.server)) "
-        f'(let [server (nrepl.server/start-server :bind "{host}" :port {port})] '
-        f"(println server) "
-        f'(println "nREPL server started on port {port}") '
-        f"@(promise))"  # Block forever
-    )
+    nrepl_start_code = _build_nrepl_start_code(host, port)
 
     argv = [
         *setup.jdk.args(bash, classpath_entries),
