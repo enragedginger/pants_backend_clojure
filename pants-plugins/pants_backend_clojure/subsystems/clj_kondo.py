@@ -84,5 +84,12 @@ class CljKondo(ExternalTool):
         return f"https://github.com/clj-kondo/clj-kondo/releases/download/v{version}/clj-kondo-{version}-{platform_str}.zip"
 
     def generate_exe(self, _plat: Platform) -> str:
-        """The executable name after extraction."""
-        return "clj-kondo"
+        """The path to the executable after extraction.
+
+        Returned with a "./" prefix (the Pants convention for external tools) so
+        that argv[0] resolves relative to the sandbox working directory. Pants runs
+        the process with PATH="" (see process_execution local runner), so a bare
+        name would be subject to platform-dependent PATH resolution and can fail to
+        start the binary under local execution on some platforms.
+        """
+        return "./clj-kondo"

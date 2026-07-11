@@ -77,14 +77,19 @@ class Cljfmt(ExternalTool):
         return f"https://github.com/weavejester/cljfmt/releases/download/{version}/cljfmt-{version}-{platform_str}.tar.gz"
 
     def generate_exe(self, _plat: Platform) -> str:
-        """Generate the executable name.
+        """Generate the path to the executable.
 
         The executable is always named 'cljfmt' after extraction from the tar.gz.
+        It is returned with a "./" prefix (the Pants convention for external tools)
+        so that argv[0] resolves relative to the sandbox working directory. Pants
+        runs the process with PATH="" (see process_execution local runner), so a
+        bare name would be subject to platform-dependent PATH resolution and can
+        fail to start the binary under local execution on some platforms.
 
         Args:
             _plat: The platform (unused, executable name is the same for all platforms).
 
         Returns:
-            The executable name.
+            The sandbox-relative path to the executable.
         """
-        return "cljfmt"
+        return "./cljfmt"
