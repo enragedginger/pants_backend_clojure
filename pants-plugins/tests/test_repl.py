@@ -16,7 +16,7 @@ from pants.jvm.target_types import JvmArtifactTarget
 from pants.jvm.util_rules import rules as jdk_util_rules
 from pants.testutil.rule_runner import PYTHON_BOOTSTRAP_ENV, RuleRunner
 from pants_backend_clojure import compile_clj
-from pants_backend_clojure.goals.repl import ClojureNRepl, ClojureRebelRepl, ClojureRepl
+from pants_backend_clojure.goals.repl import ClojureNRepl, ClojureRebelRepl, ClojureRepl, _build_nrepl_start_code
 from pants_backend_clojure.goals.repl import rules as repl_rules
 from pants_backend_clojure.namespace_analysis import rules as namespace_analysis_rules
 from pants_backend_clojure.target_types import (
@@ -706,6 +706,28 @@ def test_repl_classpath_includes_source_roots(rule_runner: RuleRunner) -> None:
             break
     else:
         pytest.fail("-cp argument not found in argv")
+
+
+def test_nrepl_start_code_binds_configured_host_and_port() -> None:
+    """Test that the nREPL startup form passes the configured host and port through."""
+    code = _build_nrepl_start_code("127.0.0.1", 7888)
+
+    assert '(nrepl.server/start-server :bind "127.0.0.1" :port 7888)' in code
+
+
+def test_nrepl_start_code_reports_actual_bound_port() -> None:
+    """Test that the startup message reports the port the server actually bound.
+
+    With port 0 the OS auto-selects an ephemeral port, so the message must read
+    the bound port from the server's :port slot at runtime instead of echoing
+    the configured value (which would print "started on port 0").
+    """
+    code = _build_nrepl_start_code("127.0.0.1", 0)
+
+    # The message must be built from the server map's :port slot...
+    assert '(str "nREPL server started on port " (:port server))' in code
+    # ...not interpolated from the configured port value.
+    assert "started on port 0" not in code
 
 
 # NOTE: nREPL tests are skipped because they require fetching the nREPL artifact
