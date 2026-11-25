@@ -1,5 +1,12 @@
 # Pants Coursier Transitive Dependency Bug
 
+> **Status (2026-11):** the missing dependency edges described here come from Coursier
+> v2.1.24 and older, and are fixed in Coursier v2.1.25. Pants 2.33 still defaults to v2.1.24,
+> so the practical fix today is to pin Coursier v2.1.27 as described under "Known Issues" in
+> the [README](../README.md); this repo's `pants.toml` does so. The rest of this document is
+> the original analysis and the Pants-side fix that was proposed at the time, kept for
+> reference. See also https://github.com/pantsbuild/pants/issues/22909.
+
 ## Summary
 
 Pants' `fetch_with_coursier()` function fails to recursively resolve transitive dependencies from lockfiles when multiple top-level `jvm_artifact` targets share dependencies. This causes missing JARs on the classpath at runtime.

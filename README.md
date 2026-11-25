@@ -64,7 +64,7 @@ Add the plugin to your `pants.toml`:
 
 ```toml
 [GLOBAL]
-pants_version = "2.31.0"
+pants_version = "2.33.2"
 plugins = ["pants-backend-clojure==0.2.4"]
 backend_packages = [
     "pants.backend.experimental.java",
@@ -304,8 +304,9 @@ clojure_source(
 
 ## System Requirements
 
-- **Python**: 3.9+
-- **Pants**: 2.30.0+
+- **Pants**: 2.33.0+ (the plugin is tested against 2.33; if you are on an older Pants, upgrade Pants first)
+- **Pants launcher**: `pants` (scie-pants) 0.13.2 or newer, which Pants 2.32+ itself requires
+- **Python**: only needed to develop the plugin (3.14); Pants supplies its own interpreter at runtime
 - **JDK**: 11+ (17 or 21 recommended)
 - **zip/unzip**: Required for clj-kondo
   - macOS: Pre-installed
@@ -319,11 +320,11 @@ clojure_source(
 
 Pants uses [Coursier](https://get-coursier.io/) to resolve JVM dependencies. There is a [known bug](https://github.com/pantsbuild/pants/issues/22909) where Coursier's locking fails to include transitive dependencies when you request a non-default version of an intermediate dependency. This can cause missing dependency errors during compilation or at runtime.
 
-The fix is available in Coursier v2.1.25-M19 but has not yet been released as a stable version. Until then, you can work around this by pinning the Coursier version in your `pants.toml`:
+The fix is in Coursier v2.1.25 and newer. Pants 2.33 still defaults to v2.1.24, so pin a fixed Coursier version in your `pants.toml`:
 
 ```toml
 [coursier]
-version = "v2.1.25-M19"
+version = "v2.1.27"
 repos = [
   "https://repo.clojars.org/",
   "https://maven-central.storage-download.googleapis.com/maven2",
@@ -331,14 +332,29 @@ repos = [
   # add any other remote repos here
 ]
 known_versions = [
-  "v2.1.25-M19|macos_x86_64|86298db922051950acac686988b42ab7756359befe24f315ee72124c2b12b3c3|82018352",
-  "v2.1.25-M19|macos_arm64|7e5fc9510fa08c3f98eb36c5801e4d7605e3f4d3d6bc43fdcd47658dd56bb316|27061694|https://github.com/coursier/coursier/releases/download/v2.1.25-M19/cs-aarch64-apple-darwin.gz",
-  "v2.1.25-M19|linux_x86_64|13fc9bc82f2e4a38a60cf801ff9399c398644c7e5e4b8cf5116ef80aa4691312|28365130",
-  "v2.1.25-M19|linux_arm64|a7bbad42163c4fde4cb1191ccfd11261c21873023c495ba7494ca109de4da761|85679032|https://github.com/coursier/coursier/releases/download/v2.1.25-M19/cs-aarch64-pc-linux.gz",
+  "v2.1.27|macos_x86_64|93ba2bf488a5b5d54fa4d3a3187334420a753fb6c752a54b1586a14a0c55ee6c|29088712",
+  "v2.1.27|macos_arm64|468a4c08483d77f8896b33bcf474e303f716ad43a3f7fb9639cc1112fca9dc1f|29095465|https://github.com/coursier/coursier/releases/download/v2.1.27/cs-aarch64-apple-darwin.gz",
+  "v2.1.27|linux_x86_64|9bf62b300a043260f39bc738ddb90dd02a1d2cc998931251614e1749d3231e07|30036399",
+  "v2.1.27|linux_arm64|dc85935416e54047233a9ffa449636b02673c5d8bbb6468e949f2f4350f80df1|29340146|https://github.com/coursier/coursier/releases/download/v2.1.27/cs-aarch64-pc-linux.gz",
 ]
+
+[jvm]
+# Required with Coursier v2.1.27 on Pants 2.33 (see below)
+jdk = "temurin:11"
+tool_jdk = "temurin:11"
 ```
 
-This should be resolved once Coursier releases a stable v2.1.25+.
+The `[jvm]` lines are part of the pin. Pants 2.33 defaults both options to `temurin:1.11`, and Coursier v2.1.27 no longer accepts JDK ids with the old `1.` prefix: without the two lines every JVM goal fails with `JVM temurin:1.11 not found in index`. Use whichever JDK you want, but write it as `temurin:11` or `temurin:17`, not `temurin:1.11`. The same applies to a `jdk=` field on a target.
+
+After pinning, regenerate your JVM lockfiles (`pants generate-lockfiles`) so they pick up the corrected dependency lists.
+
+Things to know about Coursier v2.1.27:
+
+- **Linux**: the x86_64 binary needs glibc 2.34 or newer (for example Ubuntu 22.04, Debian 12, RHEL 9). Older distributions have to stay on Coursier v2.1.24, which still has the bug.
+- **macOS**: the Apple-silicon binary is built for macOS 15 or newer.
+- **Maven settings**: from v2.1.25, Coursier applies `<mirror>` entries from `~/.m2/settings.xml` on top of the repositories listed in `[coursier].repos`.
+
+[pantsbuild/pants#23792](https://github.com/pantsbuild/pants/pull/23792) (open at the time of writing) proposes moving the Pants default to Coursier v2.1.27.
 
 ## Local Development
 

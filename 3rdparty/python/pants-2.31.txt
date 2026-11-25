@@ -1,4 +1,0 @@
-pantsbuild.pants==2.31.0
-pantsbuild.pants.testutil==2.31.0
-pytest
-packaging

@@ -8,3 +8,4 @@ dist/
 /deps.edn
 .DS_Store
 /docs/plans
+.pants.rc

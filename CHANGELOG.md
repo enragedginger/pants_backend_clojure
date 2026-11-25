@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Minimum Pants version is now 2.33.** The plugin is built and tested against
+  Pants 2.33.2. Support for Pants 2.30 and 2.31 was dropped: those versions run
+  on CPython 3.11, and Pants 2.32 and newer run on 3.14. Projects on an older
+  Pants should upgrade Pants to 2.33 before taking this plugin release. The
+  wheel now declares `Requires-Python: >=3.14`. No plugin code changed for
+  this.
+- The recommended Coursier pin (README, "Known Issues") is now the `v2.1.27`
+  release instead of the `v2.1.25-M19` milestone. On Pants 2.33 the pin also
+  needs `[jvm] jdk = "temurin:11"` and `tool_jdk = "temurin:11"`, because
+  Coursier v2.1.27 rejects the `temurin:1.11` ids that Pants 2.33 uses by
+  default. Its Linux x86_64 binary needs glibc 2.34 or newer and its
+  Apple-silicon binary is built for macOS 15 or newer.
+- Pants 2.32 and newer need a `pants` launcher (scie-pants) 0.13.2 or newer.
+  Developing the plugin now needs CPython 3.14 (the regular build, not the
+  free-threaded `3.14t`).
+
 ### Fixed
 
 - The nREPL startup message now reports the port the server actually bound

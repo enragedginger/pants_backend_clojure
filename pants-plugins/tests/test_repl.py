@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from textwrap import dedent
+from types import SimpleNamespace
 
 import pytest
 from pants.backend.java.target_types import JavaSourcesGeneratorTarget
@@ -16,7 +17,13 @@ from pants.jvm.target_types import JvmArtifactTarget
 from pants.jvm.util_rules import rules as jdk_util_rules
 from pants.testutil.rule_runner import PYTHON_BOOTSTRAP_ENV, RuleRunner
 from pants_backend_clojure import compile_clj
-from pants_backend_clojure.goals.repl import ClojureNRepl, ClojureRebelRepl, ClojureRepl, _build_nrepl_start_code
+from pants_backend_clojure.goals.repl import (
+    ClojureNRepl,
+    ClojureRebelRepl,
+    ClojureRepl,
+    _build_nrepl_start_code,
+    _prepare_repl_for_workspace,
+)
 from pants_backend_clojure.goals.repl import rules as repl_rules
 from pants_backend_clojure.namespace_analysis import rules as namespace_analysis_rules
 from pants_backend_clojure.target_types import (
@@ -706,6 +713,46 @@ def test_repl_classpath_includes_source_roots(rule_runner: RuleRunner) -> None:
             break
     else:
         pytest.fail("-cp argument not found in argv")
+
+
+def test_prepare_repl_for_workspace_only_prefixes_coursier_cache_paths() -> None:
+    """Non-path `COURSIER_*` values must pass through the workspace rewrite untouched.
+
+    The rewrite visits every env var whose name starts with `COURSIER`. Pants sets cache
+    locations there (which need the `{chroot}/` prefix), and the proposed Coursier v2.1.27
+    upgrade in Pants (pantsbuild/pants#23792) adds the plain flag
+    `COURSIER_MAVEN_SETTINGS=false`. Prefixing that flag would corrupt it.
+    """
+    # Only these attributes of JdkEnvironment are read; the values mirror Pants's ClassVars.
+    jdk = SimpleNamespace(
+        bin_dir="__jdk",
+        jdk_preparation_script="__jdk/jdk.sh",
+        java_home="__java_home",
+        coursier=SimpleNamespace(cache_dir=".cache"),
+    )
+    env = {
+        "COURSIER_CACHE": ".cache/0f3a9c/jdk",
+        "COURSIER_ARCHIVE_CACHE": ".cache/arc",
+        "COURSIER_JVM_CACHE": ".cache/v1",
+        "COURSIER_MAVEN_SETTINGS": "false",
+        "LANG": "en_US.UTF-8",
+    }
+
+    argv, prefixed_env = _prepare_repl_for_workspace(
+        ["__jdk/jdk.sh", "__java_home/bin/java", "-cp", ".:lib/a.jar", "clojure.main"],
+        env,
+        jdk,  # type: ignore[arg-type]
+    )
+
+    assert prefixed_env["COURSIER_CACHE"] == "{chroot}/.cache/0f3a9c/jdk"
+    assert prefixed_env["COURSIER_ARCHIVE_CACHE"] == "{chroot}/.cache/arc"
+    assert prefixed_env["COURSIER_JVM_CACHE"] == "{chroot}/.cache/v1"
+    assert prefixed_env["COURSIER_MAVEN_SETTINGS"] == "false"
+    assert prefixed_env["LANG"] == "en_US.UTF-8"
+    assert prefixed_env["PANTS_INTERNAL_ABSOLUTE_PREFIX"] == "{chroot}/"
+    assert argv == ("{chroot}/__jdk/jdk.sh", "{chroot}/__java_home/bin/java", "-cp", ".:{chroot}/lib/a.jar", "clojure.main")
+    # The caller's dict is not mutated.
+    assert env["COURSIER_CACHE"] == ".cache/0f3a9c/jdk"
 
 
 def test_nrepl_start_code_binds_configured_host_and_port() -> None:

@@ -3,22 +3,22 @@ PLUGIN_VERSION = "0.2.4"
 python_sources(
     name="pants-plugin-sources",
     sources=["pants_backend_clojure/**/*.py"],
-    **parametrize("pants-2.31", resolve="pants-2.31"),
-    **parametrize("pants-2.30", resolve="pants-2.30"),
+    **parametrize("pants-2.33", resolve="pants-2.33"),
+    **parametrize("pants-2.34", resolve="pants-2.34"),
 )
 
 python_sources(
     name="test-fixtures",
     sources=["tests/**/clojure_test_fixtures.py"],
-    **parametrize("pants-2.31", resolve="pants-2.31"),
-    **parametrize("pants-2.30", resolve="pants-2.30"),
+    **parametrize("pants-2.33", resolve="pants-2.33"),
+    **parametrize("pants-2.34", resolve="pants-2.34"),
 )
 
 python_tests(
     name="test-plugin-sources",
     sources=["tests/**/test_*.py"],
-    **parametrize("pants-2.31", resolve="pants-2.31"),
-    **parametrize("pants-2.30", resolve="pants-2.30"),
+    **parametrize("pants-2.33", resolve="pants-2.33"),
+    **parametrize("pants-2.34", resolve="pants-2.34"),
 )
 
 # The !! (strong exclude) dependencies below prevent pantsbuild.pants and
@@ -28,9 +28,9 @@ python_tests(
 python_distribution(
     name="wheel",
     dependencies=[
-        ":pants-plugin-sources@parametrize=pants-2.30",
-        "!!3rdparty/python:pants-2.30#pantsbuild.pants",
-        "!!3rdparty/python:pants-2.30#pantsbuild.pants.testutil",
+        ":pants-plugin-sources@parametrize=pants-2.33",
+        "!!3rdparty/python:pants-2.33#pantsbuild.pants",
+        "!!3rdparty/python:pants-2.33#pantsbuild.pants.testutil",
     ],
     provides=setup_py(
         name="pants-backend-clojure",
@@ -40,13 +40,13 @@ python_distribution(
         author_email="stephenmhopper@gmail.com",
         url="https://github.com/enragedginger/pants_backend_clojure",
         license="Apache-2.0",
-        python_requires=">=3.11",
+        python_requires=">=3.14",
         classifiers=[
             "Development Status :: 4 - Beta",
             "Intended Audience :: Developers",
             "License :: OSI Approved :: Apache Software License",
             "Programming Language :: Python :: 3",
-            "Programming Language :: Python :: 3.11",
+            "Programming Language :: Python :: 3.14",
             "Topic :: Software Development :: Build Tools",
         ],
         keywords=["pantsbuild", "pants", "clojure", "jvm", "build-system"],

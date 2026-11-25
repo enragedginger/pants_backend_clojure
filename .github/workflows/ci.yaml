@@ -13,10 +13,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python 3.11
+      - name: Setup Python 3.14
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Setup Java (Temurin 17 and 21)
         uses: actions/setup-java@v4
@@ -29,7 +29,7 @@ jobs:
       - name: Initialize Pants
         uses: pantsbuild/actions/init-pants@v10
         with:
-          gha-cache-key: cache0-py3.11
+          gha-cache-key: cache1-py3.14
           named-caches-hash: ${{ hashFiles('3rdparty/python/*.lock', 'locks/**') }}
 
       - name: Lint and typecheck

@@ -27,8 +27,9 @@ pants test pants-plugins::
 
 You'll need:
 
-- Python 3.9+
-- Pants 2.30.0+
+- Python 3.14 (the regular build, not the free-threaded `3.14t`; see "Python interpreter for
+  the resolves" in [docs/releasing.md](docs/releasing.md) if both are installed)
+- Pants 2.33.2 (pinned in `pants.toml`; needs the `pants` launcher, scie-pants, 0.13.2 or newer)
 - JDK 11+ (17 or 21 recommended)
 
 ## License

@@ -28,7 +28,7 @@ Create `.tmp_test_lockfile/pants.toml`:
 
 ```toml
 [GLOBAL]
-pants_version = "2.25.0.dev3"
+pants_version = "2.33.2"
 
 backend_packages = [
   "pants.backend.experimental.java",

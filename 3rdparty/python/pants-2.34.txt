@@ -1,0 +1,7 @@
+pantsbuild.pants==2.34.0rc0
+pantsbuild.pants.testutil==2.34.0rc0
+# The Pants that runs this repo launches tests with its own bundled pytest (8.x for Pants 2.33
+# and 2.34); pytest 9 in the resolve breaks that. Drop the cap once the pants_version in
+# pants.toml bundles a pytest that allows 9 (see the default requirements of its [pytest] tool).
+pytest<9
+packaging

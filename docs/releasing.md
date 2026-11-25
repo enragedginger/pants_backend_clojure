@@ -102,8 +102,9 @@ via parametrized resolves.
 
 ### Adding support for a new Pants version
 
-1. Create `3rdparty/python/pants-X.YZ.txt` with `pantsbuild.pants==X.YZ.0`,
-   `pantsbuild.pants.testutil==X.YZ.0`, `pytest`, and `packaging`
+1. Create `3rdparty/python/pants-X.YZ.txt` with `pantsbuild.pants==X.YZ.P`,
+   `pantsbuild.pants.testutil==X.YZ.P` (the latest patch release, e.g. `2.33.2`), `pytest`,
+   and `packaging`
 2. Add a `python_requirements` target to `3rdparty/python/BUILD` with `resolve="pants-X.YZ"`
 3. Add `"pants-X.YZ" = "3rdparty/python/pants-X.YZ.lock"` to `[python.resolves]` in `pants.toml`
 4. Add `**parametrize("pants-X.YZ", resolve="pants-X.YZ")` to all parametrized targets in
@@ -111,7 +112,25 @@ via parametrized resolves.
 5. Generate the lock file: `pants generate-lockfiles --resolve=pants-X.YZ`
 6. Bump `pants_version` and `default_resolve` in `pants.toml` to the new version
 7. Run tests, fix any API incompatibilities
-8. Update CI cache hash references if needed
+8. If the new version needs a different Python, also update `[python] interpreter_constraints`
+   in `pants.toml`, `python_requires` and the Python classifier in `pants-plugins/BUILD`,
+   `target-version` in `pyproject.toml`, and `actions/setup-python` plus the `gha-cache-key`
+   in `.github/workflows/ci.yaml` and `create-draft-release.yaml`
+
+### Preview resolves for unreleased Pants versions
+
+A resolve can track a release candidate (currently `pants-2.34`, pinned to `2.34.0rc0`) so
+that upcoming API changes show up in CI early. For a preview resolve, skip step 6 above:
+`pants_version` and `default_resolve` stay on the latest stable version, and the
+`python_distribution` stays where it is (on the lowest supported resolve). Re-pin the resolve to the final release when it ships.
+
+The Pants version that runs this repo launches tests with its own bundled pytest, so a
+resolve for a *newer* Pants may need a pytest cap to stay compatible with it. The
+`pants-2.34` requirements pin `pytest<9` for this reason (Pants 2.33 bundles pytest 8; without
+the cap the resolve locks pytest 9 and every test fails at startup with
+`module '_pytest.config' has no attribute '_console_main'`). Pants 2.34 still bundles
+pytest 8, so keep the cap until the `pants_version` in `pants.toml` is a release whose
+default `[pytest]` requirements allow pytest 9.
 
 ### Dropping support for an old Pants version
 
@@ -121,6 +140,33 @@ via parametrized resolves.
 4. Remove the `**parametrize("pants-X.YZ", ...)` entry from all targets in `pants-plugins/BUILD`
 5. Clean up any version-conditional code that's no longer needed
 6. If the dropped version was used by `python_distribution`, update it to a new lower bound
+   (and `python_requires` and the classifiers, if the supported Python changed)
+
+### Python interpreter for the resolves
+
+Pants 2.32 and newer run on CPython 3.14, and their `pantsbuild.pants` wheels require exactly
+3.14, so the global `[python] interpreter_constraints` is `["==3.14.*"]`. Pants 2.30 and 2.31 ran
+on CPython 3.11 and are no longer supported by this repo; a resolve for them would need its
+own interpreter constraints.
+
+- **Use the regular (GIL) build of 3.14.** The Pants 2.32 and 2.33 wheels are `cp314` only.
+  If a free-threaded interpreter (`3.14t`) is also installed, Pex may select it and fail with
+  "Failed to resolve compatible artifacts ... cp314-cp314t". Work around it with a local,
+  gitignored `.pants.rc` that narrows the interpreter search path:
+
+  ```toml
+  [python-bootstrap]
+  search_path = ["/path/to/a/regular/python3.14/bin"]
+  ```
+
+- Pants 2.34 publishes both `cp314` and `cp314t` wheels, so for a 2.34 resolve a
+  free-threaded pick no longer fails and would go unnoticed. If it matters, check which
+  interpreter the resolve's tests ran on (for example by printing `sys._is_gil_enabled()`
+  from a test).
+- Separately, Pants 2.34 itself runs on the free-threaded interpreter by default, so the
+  plugin is loaded under `3.14t` in any repo that sets `pants_version` to 2.34 or newer.
+- The `pants` launcher (scie-pants) must be 0.13.2 or newer for Pants 2.32 and 2.33, and
+  0.13.4 or newer for 2.34. CI installs the latest launcher.
 
 ### Relationship between `pants_version` and supported versions
 

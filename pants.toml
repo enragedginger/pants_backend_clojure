@@ -1,5 +1,5 @@
 [GLOBAL]
-pants_version = "2.31.0"
+pants_version = "2.33.2"
 process_execution_local_enable_nailgun = false
 pythonpath = ["%(buildroot)s/pants-plugins"]
 backend_packages = [
@@ -21,12 +21,12 @@ marker_filenames = ["BUILD"]
 
 [python]
 enable_resolves = true
-interpreter_constraints = ["==3.11.*"]
-default_resolve = "pants-2.31"
+interpreter_constraints = ["==3.14.*"]
+default_resolve = "pants-2.33"
 
 [python.resolves]
-"pants-2.31" = "3rdparty/python/pants-2.31.lock"
-"pants-2.30" = "3rdparty/python/pants-2.30.lock"
+"pants-2.33" = "3rdparty/python/pants-2.33.lock"
+"pants-2.34" = "3rdparty/python/pants-2.34.lock"
 
 [python-repos]
 find_links = ["https://wheels.pantsbuild.org/simple"]
@@ -37,15 +37,23 @@ repos = [
   "https://maven-central.storage-download.googleapis.com/maven2",
   "https://repo1.maven.org/maven2",
 ]
-# Pick up newer version of Coursier for bug fixes
-version = "v2.1.25-M19"
+# Coursier v2.1.25 or newer is needed for correct transitive dependencies in lockfiles
+# (https://github.com/pantsbuild/pants/issues/22909); Pants 2.33 defaults to v2.1.24.
+# The macOS arm64 entry needs its explicit URL: Pants 2.33 would otherwise download the x86_64
+# binary for it. The Linux arm64 URL just spells out what Pants would use anyway.
+version = "v2.1.27"
 known_versions = [
-  "v2.1.25-M19|macos_x86_64|86298db922051950acac686988b42ab7756359befe24f315ee72124c2b12b3c3|82018352",
-  "v2.1.25-M19|macos_arm64|7e5fc9510fa08c3f98eb36c5801e4d7605e3f4d3d6bc43fdcd47658dd56bb316|27061694|https://github.com/coursier/coursier/releases/download/v2.1.25-M19/cs-aarch64-apple-darwin.gz",
-  "v2.1.25-M19|linux_x86_64|13fc9bc82f2e4a38a60cf801ff9399c398644c7e5e4b8cf5116ef80aa4691312|28365130",
-  "v2.1.25-M19|linux_arm64|a7bbad42163c4fde4cb1191ccfd11261c21873023c495ba7494ca109de4da761|85679032|https://github.com/coursier/coursier/releases/download/v2.1.25-M19/cs-aarch64-pc-linux.gz",
+  "v2.1.27|macos_x86_64|93ba2bf488a5b5d54fa4d3a3187334420a753fb6c752a54b1586a14a0c55ee6c|29088712",
+  "v2.1.27|macos_arm64|468a4c08483d77f8896b33bcf474e303f716ad43a3f7fb9639cc1112fca9dc1f|29095465|https://github.com/coursier/coursier/releases/download/v2.1.27/cs-aarch64-apple-darwin.gz",
+  "v2.1.27|linux_x86_64|9bf62b300a043260f39bc738ddb90dd02a1d2cc998931251614e1749d3231e07|30036399",
+  "v2.1.27|linux_arm64|dc85935416e54047233a9ffa449636b02673c5d8bbb6468e949f2f4350f80df1|29340146|https://github.com/coursier/coursier/releases/download/v2.1.27/cs-aarch64-pc-linux.gz",
 ]
 
+[jvm]
+# Coursier v2.1.27 no longer accepts the "temurin:1.11" style ids that Pants 2.33 uses by default
+# ("JVM temurin:1.11 not found in index"), so name both JDKs without the "1." prefix.
+jdk = "temurin:11"
+tool_jdk = "temurin:11"
 
 [jvm.resolves]
 java17 = "locks/jvm/java17.lock.jsonc"
