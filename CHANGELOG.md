@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- clj-kondo lint now sees imported library configs. The whole `.clj-kondo/`
+  tree is shipped to the sandbox (except `.clj-kondo/.cache`), so configs and
+  hooks copied in with `clj-kondo --copy-configs` run under `pants lint` as
+  they do in an editor. Previously only `config.edn` and `hooks/` were
+  included, which produced false positives.
+- clj-kondo and cljfmt now start reliably under local execution. The
+  downloaded binaries are run by their sandbox-relative path (`./clj-kondo`,
+  `./cljfmt`) instead of a bare name that depended on a `PATH` lookup. For
+  `clojure_deploy_jar` this fixes a spurious "Could not find source file for
+  main namespace" error caused by namespace analysis coming back empty.
 - The nREPL startup message now reports the port the server actually bound
   instead of echoing the configured `[nrepl].port` value. With `port = 0`
   (OS-assigned ephemeral port) the message previously printed

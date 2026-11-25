@@ -73,22 +73,37 @@ The workflow will:
 
 Once the release is finalized (**no longer a draft** — the publish workflow's
 validation step fails fast if the release is still a draft), trigger the
-`Publish to PyPI` workflow. Run it **twice**: first `test-only` to sanity-check
-on TestPyPI, then `full` once that looks good.
+`Publish to PyPI` workflow **once**, with `publish_scope=full`.
 
 - **release_tag**: the tag name (e.g., `releases/v0.2.0`)
 - **publish_scope**:
-  - `test-only` — uploads to TestPyPI only
-  - `full` — uploads to TestPyPI **and** production PyPI (the PyPI job only
-    runs after the TestPyPI job succeeds)
+  - `full` — uploads to TestPyPI **and then** production PyPI. The PyPI job
+    only runs after the TestPyPI job succeeds, so TestPyPI still acts as the
+    check before the real upload.
+  - `test-only` — uploads to TestPyPI only. Do not use it as a first step
+    before `full` for the same version (see below).
 
 ```bash
-# 1. Sanity-check on TestPyPI
-gh workflow run publish.yaml -f release_tag=releases/v0.2.0 -f publish_scope=test-only
-
-# 2. Then publish for real
 gh workflow run publish.yaml -f release_tag=releases/v0.2.0 -f publish_scope=full
 ```
+
+**Do not run `test-only` and then `full` for the same version.** TestPyPI and
+PyPI accept each file only once, and the workflow does not skip files that are
+already there. A `full` run after a `test-only` run fails at its TestPyPI step,
+and the PyPI job is then skipped. The same applies to re-running `full` after
+the TestPyPI upload has succeeded. `test-only` is for trying out the workflow
+itself with a version you do not intend to publish.
+
+If you want to look at the artifacts before publishing, download them from the
+GitHub release and check the wheel's metadata:
+
+```bash
+gh release download releases/v0.2.0 --dir /tmp/release-check --pattern 'pants_backend_clojure*'
+unzip -p /tmp/release-check/*.whl '*/METADATA' | head -20
+```
+
+An upload to PyPI is permanent: a version number can never be uploaded again,
+even after deleting the release there.
 
 Publishing uses trusted publishing via the `testpypi` / `pypi` GitHub
 environments, so there are no tokens to pass.
